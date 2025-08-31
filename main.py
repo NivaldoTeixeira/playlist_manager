@@ -9,6 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, SETLIST_KEY, OPENAI_API_KEY
 from spotify_utils import make_auth_manager, create_playlist_with_songs
+from setlist_utils import get_setlist  # Ensure this module provides the get_setlist function
 from openai_utils import parse_request
 
 logging.basicConfig(level=logging.INFO)
@@ -19,36 +20,6 @@ app = FastAPI(title="Playlist Manager Bot")
 
 # --- Telegram app (webhook mode) ---
 tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# ---------- SETLIST.FM ----------
-def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = None):
-    url = "https://api.setlist.fm/rest/1.0/search/setlists"
-    headers = {"x-api-key": SETLIST_KEY, "Accept": "application/json"}
-
-    params = {"artistName": artist, "p": 1}
-    if city:
-        params["cityName"] = city
-    if year:
-        params["year"] = year
-
-    r = requests.get(url, headers=headers, params=params, timeout=20)
-    if r.status_code != 200:
-        logger.error("Setlist.fm erro %s: %s", r.status_code, r.text[:200])
-        return []
-
-    data = r.json()
-    items = data.get("setlist", [])
-    if not items:
-        return []
-
-    sets = items[0].get("sets", {}).get("set", [])
-    songs = []
-    for s in sets:
-        for song in s.get("song", []):
-            name = song.get("name")
-            if name:
-                songs.append(name)
-    return songs
 
 # ---------- TELEGRAM HANDLERS ----------
 async def cmd_start(update, context):
