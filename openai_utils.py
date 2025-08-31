@@ -15,9 +15,17 @@ def parse_request(text: str):
     import json
     try:
         prompt = f"""
-        Extraia do texto a seguir os campos JSON: artist, city, year (YYYY).
+        Contexto: você é um assistente que extrai informações de texto; 
+        Seu uso é para ajudar a criar playlists no spotify a partir de setlists de shows. 
+        O usuário fornece uma mensagem com informações sobre o artista, cidade e ano do show (cidade e ano sendo opcionais). 
+        
+        Tarefa: Interprete e extraia do texto a seguir, enviado pelo, os campos JSON: artist, city, year (YYYY).
         Se não houver city ou year, retorne null. Não invente.
-        Retorne apenas um JSON puro, sem nenhum outro texto ou markdown.
+        Se não encontrar o nome da banda exato, veja se não é um apelido, abreviação comum ou erro de digitação ou possível correção automática do celular. 
+        Se a chance de ser um erro for alta, tente corrigir.
+        
+        Formato de resposta: Retorne apenas um JSON puro, artist, city, year (YYYY), sem nenhum outro texto ou markdown.
+        
         Texto: "{text}"
         """
         resp = oa_client.chat.completions.create(
