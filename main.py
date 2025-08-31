@@ -84,7 +84,7 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
     return songs
 
 # ---------- OPENAI: PARSING NATURAL ----------
-ddef parse_request(text: str):
+def parse_request(text: str):
     """
     Usa LLM para extrair {artist, city, year} do pedido.
     """
