@@ -87,34 +87,34 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
 def parse_request(text: str):
     """
     Usa LLM para extrair {artist, city, year} do pedido.
+    Retorna uma tupla (artist, city, year), podendo ser None se não for identificado.
     """
-    prompt = f"""
-    Extraia do texto a seguir os campos JSON: artist, city, year (YYYY).
-    Se não houver city ou year, retorne null. Não invente.
-    Texto: "{text}"
-    """
-
-    resp = oa_client.responses.create(
-        model="gpt-4.1-mini",
-        input=prompt
-    )
-
-    # a saída bruta do modelo (texto)
-    raw_text = resp.output_text
-
-    # converte para JSON
     import json
     try:
-        data = json.loads(raw_text)
-    except Exception as e:
-        logger.error("Erro ao converter resposta da LLM em JSON: %s", e)
+        prompt = f"""
+        Extraia do texto a seguir os campos JSON: artist, city, year (YYYY).
+        Se não houver city ou year, retorne null. Não invente.
+        Retorne apenas um JSON válido.
+        Texto: "{text}"
+        """
+        resp = oa_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        content = resp.choices[0].message.content
+        # Converte o JSON retornado em dicionário
+        data = json.loads(content)
+        artist = data.get("artist") or None
+        city = data.get("city") or None
+        year = data.get("year") or None
+        return artist, city, year
+    except json.JSONDecodeError:
+        logger.warning("Não consegui decodificar JSON do LLM: %s", content)
         return None, None, None
-
-    artist = data.get("artist")
-    city = data.get("city")
-    year = data.get("year")
-    return artist, city, year
-
+    except Exception as e:
+        logger.warning("Erro no parse_request: %s", e)
+        return None, None, None
 
 # ---------- SPOTIFY: CRIAR PLAYLIST ----------
 def create_playlist_with_songs(artist: str, songs: list[str], playlist_name: Optional[str] = None) -> Optional[str]:
