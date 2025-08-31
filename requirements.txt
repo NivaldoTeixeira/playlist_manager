@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-telegram-bot==21.4
+spotipy
+requests
+openai>=1.30.0
+python-dotenv
