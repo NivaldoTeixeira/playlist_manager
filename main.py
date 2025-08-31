@@ -4,15 +4,12 @@ from typing import Optional
 import requests
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import RedirectResponse, PlainTextResponse
-from openai import OpenAI
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, SETLIST_KEY, OPENAI_API_KEY
-from spotify_utils import make_auth_manager
-
+from spotify_utils import make_auth_manager, create_playlist_with_songs
+from openai_utils import parse_request
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("playlist-bot")
@@ -22,9 +19,6 @@ app = FastAPI(title="Playlist Manager Bot")
 
 # --- Telegram app (webhook mode) ---
 tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# --- OpenAI client ---
-oa_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ---------- SETLIST.FM ----------
 def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = None):
@@ -55,45 +49,6 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
             if name:
                 songs.append(name)
     return songs
-
-# ---------- OPENAI: PARSING NATURAL ----------
-def parse_request(text: str):
-    """
-    Usa LLM para extrair {artist, city, year} do pedido.
-    Retorna uma tupla (artist, city, year), podendo ser None se não for identificado.
-    """
-    import json
-    try:
-        prompt = f"""
-        Extraia do texto a seguir os campos JSON: artist, city, year (YYYY).
-        Se não houver city ou year, retorne null. Não invente.
-        Retorne apenas um JSON puro, sem nenhum outro texto ou markdown.
-        Texto: "{text}"
-        """
-        resp = oa_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        content = resp.choices[0].message.content.strip()
-
-        # Remove possíveis blocos de código Markdown
-        if content.startswith("```") and content.endswith("```"):
-            content = "\n".join(content.splitlines()[1:-1])
-
-        data = json.loads(content)
-        artist = data.get("artist") or None
-        city = data.get("city") or None
-        year = data.get("year") or None
-        return artist, city, year
-
-    except json.JSONDecodeError:
-        logger.warning("Não consegui decodificar JSON do LLM: %s", content)
-        return None, None, None
-    except Exception as e:
-        logger.warning("Erro no parse_request: %s", e)
-        return None, None, None
-
 
 # ---------- TELEGRAM HANDLERS ----------
 async def cmd_start(update, context):
