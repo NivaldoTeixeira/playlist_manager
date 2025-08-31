@@ -1,5 +1,6 @@
 import logging
 import spotipy
+from typing import Optional
 from spotipy.oauth2 import SpotifyOAuth
 from config import SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET, SPOTIPY_REDIRECT_URI, SCOPES, SPOTIFY_REFRESH_TOKEN
 
