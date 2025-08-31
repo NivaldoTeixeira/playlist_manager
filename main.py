@@ -10,7 +10,9 @@ from spotipy.oauth2 import SpotifyOAuth
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET, SPOTIPY_REDIRECT_URI, SPOTIFY_REFRESH_TOKEN, SETLIST_KEY, OPENAI_API_KEY, SCOPES
+from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, SETLIST_KEY, OPENAI_API_KEY
+from spotify_utils import make_auth_manager
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("playlist-bot")
@@ -23,24 +25,6 @@ tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # --- OpenAI client ---
 oa_client = OpenAI(api_key=OPENAI_API_KEY)
-
-# ---------- SPOTIFY HELPERS ----------
-def make_auth_manager() -> SpotifyOAuth:
-    return SpotifyOAuth(
-        client_id=SPOTIPY_CLIENT_ID,
-        client_secret=SPOTIPY_CLIENT_SECRET,
-        redirect_uri=SPOTIPY_REDIRECT_URI,
-        scope=SCOPES,
-        show_dialog=False
-    )
-
-def get_spotify_client() -> spotipy.Spotify:
-    if not SPOTIFY_REFRESH_TOKEN:
-        raise RuntimeError("SPOTIFY_REFRESH_TOKEN não configurado. Use /login para gerar.")
-    am = make_auth_manager()
-    token_info = am.refresh_access_token(SPOTIFY_REFRESH_TOKEN)
-    access_token = token_info["access_token"]
-    return spotipy.Spotify(auth=access_token)
 
 # ---------- SETLIST.FM ----------
 def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = None):
@@ -110,27 +94,6 @@ def parse_request(text: str):
         logger.warning("Erro no parse_request: %s", e)
         return None, None, None
 
-
-# ---------- SPOTIFY: CRIAR PLAYLIST ----------
-def create_playlist_with_songs(artist: str, songs: list[str], playlist_name: Optional[str] = None) -> Optional[str]:
-    sp = get_spotify_client()
-    me = sp.current_user()["id"]
-    name = playlist_name or f"Setlist {artist}"
-    playlist = sp.user_playlist_create(user=me, name=name, public=True, description=f"Gerada pelo bot - {artist}")
-    pid = playlist["id"]
-
-    track_ids = []
-    for s in songs:
-        q = f'track:"{s}" artist:"{artist}"'
-        res = sp.search(q=q, limit=1, type="track")
-        items = res.get("tracks", {}).get("items", [])
-        if items:
-            track_ids.append(items[0]["id"])
-
-    for i in range(0, len(track_ids), 100):
-        sp.playlist_add_items(pid, track_ids[i:i+100])
-
-    return playlist["external_urls"]["spotify"]
 
 # ---------- TELEGRAM HANDLERS ----------
 async def cmd_start(update, context):
