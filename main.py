@@ -7,10 +7,10 @@ from fastapi.responses import RedirectResponse, PlainTextResponse
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, SETLIST_KEY, OPENAI_API_KEY
-from spotify_utils import make_auth_manager, create_playlist_with_songs
-from setlist_utils import get_setlist  # Ensure this module provides the get_setlist function
-from openai_utils import parse_request
+from config import TELEGRAM_TOKEN, WEBHOOK_SECRET
+from telegram_handlers import cmd_start, handle_text
+
+from spotify_utils import make_auth_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("playlist-bot")
@@ -20,42 +20,6 @@ app = FastAPI(title="Playlist Manager Bot")
 
 # --- Telegram app (webhook mode) ---
 tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# ---------- TELEGRAM HANDLERS ----------
-async def cmd_start(update, context):
-    await update.message.reply_text(
-        "🎵 Oi! Me peça algo como:\n"
-        "• 'Cria playlist do show do Coldplay em São Paulo 2022'\n"
-        "• 'Quero a setlist mais recente do Metallica'\n"
-        "Eu vou buscar a setlist no setlist.fm e criar a playlist no Spotify."
-    )
-
-async def handle_text(update, context):
-    text = update.message.text.strip()
-    await update.message.reply_text("🔎 Interpretando seu pedido...")
-    try:
-        artist, city, year = parse_request(text)
-        if not artist:
-            await update.message.reply_text("Não entendi o artista. Tente: 'playlist do Coldplay em SP 2022'.")
-            return
-
-        songs = get_setlist(artist, city, year)
-        if not songs:
-            msg = "Não encontrei setlist."
-            if city or year:
-                msg += f" (filtros: cidade={city or '-'}, ano={year or '-'})"
-            await update.message.reply_text(f"⚠️ {msg}")
-            return
-
-        await update.message.reply_text("🎧 Criando sua playlist no Spotify...")
-        url = create_playlist_with_songs(artist, songs, playlist_name=f"Setlist {artist} {city or ''} {year or ''}".strip())
-        if url:
-            await update.message.reply_text(f"✅ Pronto! Sua playlist:\n{url}")
-        else:
-            await update.message.reply_text("Algo falhou ao criar a playlist.")
-    except Exception as e:
-        logger.exception("Erro no handler: %s", e)
-        await update.message.reply_text(f"😕 Ocorreu um erro: {e}")
 
 tg_app.add_handler(CommandHandler("start", cmd_start))
 tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
