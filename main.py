@@ -19,8 +19,8 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
-SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI")  # https://playlist-manager-0ln7.onrender.com/callback
-SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")  # vamos preencher depois
+SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI")
+SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")
 SETLIST_KEY = os.getenv("SETLIST_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -35,28 +35,6 @@ tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
 # --- OpenAI client ---
 oa_client = OpenAI(api_key=OPENAI_API_KEY)
 
-bot = telegram.Bot(token=TELEGRAM_TOKEN)
-
-async def handle_update(update: telegram.Update):
-    if update.message:
-        text = update.message.text
-        chat_id = update.message.chat.id
-
-        # Aqui você trata o comando /start
-        if text == "/start":
-            bot.send_message(chat_id=chat_id, text="Olá! 👋 Eu sou seu bot de playlists. \
-Envie comandos como:\n- Cria playlist do Metallica\n- Adiciona música X na playlist Y\n- Setlist do Metallica em São Paulo 2017")
-        else:
-            # Aqui entra a função que processa pedidos de playlists/setlists
-            bot.send_message(chat_id=chat_id, text=f"Recebi seu pedido: {text}\nVou processar...")
-
-@app.post("/webhook/{secret}")
-async def telegram_webhook(secret: str, request: Request):
-    if secret != WEBHOOK_SECRET:
-        return {"status": "forbidden"}
-    update = telegram.Update.de_json(await request.json(), bot)
-    await handle_update(update)
-    return {"status": "ok"}
 
 # ---------- SPOTIFY HELPERS ----------
 def make_auth_manager() -> SpotifyOAuth:
@@ -68,26 +46,22 @@ def make_auth_manager() -> SpotifyOAuth:
         show_dialog=False
     )
 
+
 def get_spotify_client() -> spotipy.Spotify:
-    """
-    Usa o REFRESH TOKEN para obter um access token novo e devolve um cliente Spotify válido.
-    """
     if not SPOTIFY_REFRESH_TOKEN:
-        raise RuntimeError("SPOTIFY_REFRESH_TOKEN não configurado ainda. Acesse /login para gerar.")
+        raise RuntimeError(
+            "SPOTIFY_REFRESH_TOKEN não configurado ainda. Acesse /login para gerar."
+        )
     am = make_auth_manager()
     token_info = am.refresh_access_token(SPOTIFY_REFRESH_TOKEN)
     access_token = token_info["access_token"]
     return spotipy.Spotify(auth=access_token)
 
+
 # ---------- SETLIST.FM ----------
 def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = None):
-    """
-    Busca a setlist pelo artista, com filtros opcionais de cidade e ano.
-    Retorna lista de nomes de músicas (strings).
-    """
     url = "https://api.setlist.fm/rest/1.0/search/setlists"
     headers = {"x-api-key": SETLIST_KEY, "Accept": "application/json"}
-
     params = {"artistName": artist, "p": 1}
     if city:
         params["cityName"] = city
@@ -104,7 +78,6 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
     if not items:
         return []
 
-    # pega a primeira setlist encontrada (você pode evoluir para escolher entre várias)
     sets = items[0].get("sets", {}).get("set", [])
     songs = []
     for s in sets:
@@ -114,11 +87,9 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
                 songs.append(name)
     return songs
 
+
 # ---------- OPENAI: PARSING NATURAL ----------
 def parse_request(text: str):
-    """
-    Usa LLM para extrair {artist, city, year} do pedido.
-    """
     prompt = f"""
     Extraia do texto a seguir os campos JSON: artist, city, year (YYYY).
     Se não houver city ou year, retorne null. Não invente.
@@ -130,11 +101,11 @@ def parse_request(text: str):
         response_format={"type": "json"}
     )
     data = resp.output_parsed or {}
-    # normaliza chaves
     artist = data.get("artist") or data.get("Artist")
     city = data.get("city") or data.get("City")
     year = data.get("year") or data.get("Year")
     return artist, city, year
+
 
 # ---------- SPOTIFY: CRIAR PLAYLIST ----------
 def create_playlist_with_songs(artist: str, songs: list[str], playlist_name: Optional[str] = None) -> Optional[str]:
@@ -152,14 +123,14 @@ def create_playlist_with_songs(artist: str, songs: list[str], playlist_name: Opt
         if items:
             track_ids.append(items[0]["id"])
 
-    # adiciona em lotes de 100
     for i in range(0, len(track_ids), 100):
         sp.playlist_add_items(pid, track_ids[i:i+100])
 
     return playlist["external_urls"]["spotify"]
 
+
 # ---------- TELEGRAM HANDLERS ----------
-async def cmd_start(update, context):
+async def cmd_start(update: Update, context):
     await update.message.reply_text(
         "🎵 Oi! Me peça algo como:\n"
         "• 'Cria playlist do show do Coldplay em São Paulo 2022'\n"
@@ -167,7 +138,8 @@ async def cmd_start(update, context):
         "Eu vou buscar a setlist no setlist.fm e criar a playlist no Spotify."
     )
 
-async def handle_text(update, context):
+
+async def handle_text(update: Update, context):
     text = update.message.text.strip()
     await update.message.reply_text("🔎 Interpretando seu pedido...")
     try:
@@ -185,7 +157,11 @@ async def handle_text(update, context):
             return
 
         await update.message.reply_text("🎧 Criando sua playlist no Spotify...")
-        url = create_playlist_with_songs(artist, songs, playlist_name=f"Setlist {artist} {city or ''} {year or ''}".strip())
+        url = create_playlist_with_songs(
+            artist,
+            songs,
+            playlist_name=f"Setlist {artist} {city or ''} {year or ''}".strip()
+        )
         if url:
             await update.message.reply_text(f"✅ Pronto! Sua playlist:\n{url}")
         else:
@@ -194,38 +170,33 @@ async def handle_text(update, context):
         logger.exception("Erro no handler: %s", e)
         await update.message.reply_text(f"😕 Ocorreu um erro: {e}")
 
+
 tg_app.add_handler(CommandHandler("start", cmd_start))
 tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
 
 # ---------- FASTAPI ROUTES ----------
 @app.get("/health")
 def health():
     return {"ok": True}
 
+
 @app.get("/login")
 def login():
-    """
-    Inicia o fluxo OAuth do Spotify. Acesse esta rota, faça login, e o Spotify vai redirecionar para /callback.
-    """
     auth = make_auth_manager()
     return RedirectResponse(auth.get_authorize_url())
 
+
 @app.get("/callback")
 def callback(code: Optional[str] = None, error: Optional[str] = None):
-    """
-    Recebe o code do Spotify, troca por tokens e mostra o REFRESH TOKEN na tela e nos logs.
-    Copie e salve em SPOTIFY_REFRESH_TOKEN nas variáveis do Render.
-    """
     if error:
         return PlainTextResponse(f"Erro do Spotify: {error}", status_code=400)
     if not code:
         return PlainTextResponse("Faltou o parâmetro ?code=...", status_code=400)
 
     am = make_auth_manager()
-    # nas versões recentes do spotipy, as_dict=True garante o dicionário completo
     token_info = am.get_access_token(code, as_dict=True)
     refresh = token_info.get("refresh_token")
-    access = token_info.get("access_token")
 
     if not refresh:
         return PlainTextResponse("Não veio refresh_token. Tente novamente com show_dialog=true ou revogue acesso no Spotify.", status_code=400)
@@ -234,10 +205,10 @@ def callback(code: Optional[str] = None, error: Optional[str] = None):
     return PlainTextResponse(
         "✅ Autorizado!\n\n"
         "Copie o valor abaixo e salve nas variáveis do Render com o nome SPOTIFY_REFRESH_TOKEN.\n"
-        "Depois clique em 'Deploy latest' para reiniciar o serviço.\n\n"
         f"SPOTIFY_REFRESH_TOKEN = {refresh}\n\n"
-        "Dica: mantenha este valor em segredo."
+        "Depois clique em 'Deploy latest' para reiniciar o serviço."
     )
+
 
 @app.post("/webhook/{token}")
 async def telegram_webhook(token: str, request: Request):
@@ -248,10 +219,12 @@ async def telegram_webhook(token: str, request: Request):
     await tg_app.process_update(update)
     return PlainTextResponse("ok")
 
+
 # Inicializa/encerra o app do Telegram junto com a FastAPI
 @app.on_event("startup")
 async def on_startup():
     await tg_app.initialize()
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
