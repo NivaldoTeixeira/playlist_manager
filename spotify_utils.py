@@ -29,7 +29,7 @@ def create_playlist_with_songs(artist: str, songs: list[str], playlist_name: Opt
     sp = get_spotify_client()
     me = sp.current_user()["id"]
     name = playlist_name or f"Setlist {artist}"
-    playlist = sp.user_playlist_create(user=me, name=name, public=True, description=f"Gerada pelo bot - {artist}")
+    playlist = sp.user_playlist_create(user=me, name=name, public=True, description=f"By NT77")
     pid = playlist["id"]
 
     track_ids = []
