@@ -35,6 +35,29 @@ tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
 # --- OpenAI client ---
 oa_client = OpenAI(api_key=OPENAI_API_KEY)
 
+bot = telegram.Bot(token=TELEGRAM_TOKEN)
+
+async def handle_update(update: telegram.Update):
+    if update.message:
+        text = update.message.text
+        chat_id = update.message.chat.id
+
+        # Aqui você trata o comando /start
+        if text == "/start":
+            bot.send_message(chat_id=chat_id, text="Olá! 👋 Eu sou seu bot de playlists. \
+Envie comandos como:\n- Cria playlist do Metallica\n- Adiciona música X na playlist Y\n- Setlist do Metallica em São Paulo 2017")
+        else:
+            # Aqui entra a função que processa pedidos de playlists/setlists
+            bot.send_message(chat_id=chat_id, text=f"Recebi seu pedido: {text}\nVou processar...")
+
+@app.post("/webhook/{secret}")
+async def telegram_webhook(secret: str, request: Request):
+    if secret != WEBHOOK_SECRET:
+        return {"status": "forbidden"}
+    update = telegram.Update.de_json(await request.json(), bot)
+    await handle_update(update)
+    return {"status": "ok"}
+
 # ---------- SPOTIFY HELPERS ----------
 def make_auth_manager() -> SpotifyOAuth:
     return SpotifyOAuth(
