@@ -1,4 +1,3 @@
-import os
 import logging
 from typing import Optional
 
@@ -11,20 +10,10 @@ from spotipy.oauth2 import SpotifyOAuth
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET, SPOTIPY_REDIRECT_URI, SPOTIFY_REFRESH_TOKEN, SETLIST_KEY, OPENAI_API_KEY, SCOPES
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("playlist-bot")
-
-# --- ENV ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET")
-SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID")
-SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
-SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI")  # https://playlist-manager-0ln7.onrender.com/callback
-SPOTIFY_REFRESH_TOKEN = os.getenv("SPOTIFY_REFRESH_TOKEN")  # depois de gerar via /login
-SETLIST_KEY = os.getenv("SETLIST_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-SCOPES = "playlist-modify-public playlist-modify-private"
 
 # --- FastAPI app ---
 app = FastAPI(title="Playlist Manager Bot")
