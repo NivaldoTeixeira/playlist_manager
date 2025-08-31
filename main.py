@@ -84,22 +84,37 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
     return songs
 
 # ---------- OPENAI: PARSING NATURAL ----------
-def parse_request(text: str):
+ddef parse_request(text: str):
+    """
+    Usa LLM para extrair {artist, city, year} do pedido.
+    """
     prompt = f"""
     Extraia do texto a seguir os campos JSON: artist, city, year (YYYY).
     Se não houver city ou year, retorne null. Não invente.
     Texto: "{text}"
     """
+
     resp = oa_client.responses.create(
         model="gpt-4.1-mini",
-        input=prompt,
-        response_format={"type": "json"}
+        input=prompt
     )
-    data = resp.output_parsed or {}
-    artist = data.get("artist") or data.get("Artist")
-    city = data.get("city") or data.get("City")
-    year = data.get("year") or data.get("Year")
+
+    # a saída bruta do modelo (texto)
+    raw_text = resp.output_text
+
+    # converte para JSON
+    import json
+    try:
+        data = json.loads(raw_text)
+    except Exception as e:
+        logger.error("Erro ao converter resposta da LLM em JSON: %s", e)
+        return None, None, None
+
+    artist = data.get("artist")
+    city = data.get("city")
+    year = data.get("year")
     return artist, city, year
+
 
 # ---------- SPOTIFY: CRIAR PLAYLIST ----------
 def create_playlist_with_songs(artist: str, songs: list[str], playlist_name: Optional[str] = None) -> Optional[str]:
