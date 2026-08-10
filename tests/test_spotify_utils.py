@@ -86,7 +86,8 @@ def test_consultas_sem_repeticao():
 # ---------- busca ----------
 def test_cai_para_texto_livre():
     fake = FakeSpotify({"The Anthem Good Charlotte": [faixa("t1", "Good Charlotte")]})
-    assert sp_u._buscar_faixa(fake, Song("The Anthem - Live", "Good Charlotte")) == "t1"
+    achada = sp_u._buscar_faixa(fake, Song("The Anthem - Live", "Good Charlotte"))
+    assert achada["id"] == "t1"
 
 
 def test_prefere_artista_correspondente():
@@ -95,7 +96,7 @@ def test_prefere_artista_correspondente():
         faixa("karaoke", "Karaoke Band"),
         faixa("certo", "blink-182"),
     ]})
-    assert sp_u._buscar_faixa(fake, Song("Dammit", "blink-182")) == "certo"
+    assert sp_u._buscar_faixa(fake, Song("Dammit", "blink-182"))["id"] == "certo"
 
 
 def test_sem_match_devolve_none():
@@ -186,3 +187,57 @@ def test_refresh_token_ausente(monkeypatch):
     monkeypatch.setattr(sp_u, "SPOTIFY_REFRESH_TOKEN", "")
     with pytest.raises(sp_u.SpotifyIndisponivel):
         sp_u.get_spotify_client()
+
+
+# ---------- ordenação da playlist (sem spoiler) ----------
+def _f(nome, popularidade=0, plays=1):
+    return sp_u._Faixa(track_id=nome, popularidade=popularidade, plays=plays, nome=nome)
+
+
+def test_ordena_por_popularidade_no_spotify():
+    ordenada = sp_u._ordenar([_f("media", 50), _f("hit", 90), _f("obscura", 10)])
+    assert [f.nome for f in ordenada] == ["hit", "media", "obscura"]
+
+
+def test_sem_popularidade_usa_frequencia_nos_shows():
+    """Cascata: popularidade ausente em todas, decide quantas vezes foi tocada."""
+    ordenada = sp_u._ordenar([_f("rara", plays=1), _f("sempre", plays=9), _f("as_vezes", plays=4)])
+    assert [f.nome for f in ordenada] == ["sempre", "as_vezes", "rara"]
+
+
+def test_sem_popularidade_nem_frequencia_usa_alfabetica():
+    """Show único: todas com uma aparição e sem popularidade, sobra o nome."""
+    ordenada = sp_u._ordenar([_f("Zebra"), _f("abelha"), _f("Macaco")])
+    assert [f.nome for f in ordenada] == ["abelha", "Macaco", "Zebra"]
+
+
+def test_popularidade_tem_prioridade_sobre_frequencia():
+    ordenada = sp_u._ordenar([_f("tocada_sempre", 10, plays=9), _f("hit", 90, plays=1)])
+    assert [f.nome for f in ordenada] == ["hit", "tocada_sempre"]
+
+
+def test_playlist_nao_sai_na_ordem_do_show(usar):
+    """O ponto da mudança: a ordem da playlist não pode entregar o roteiro."""
+    fake = usar(FakeSpotify({
+        'track:"Abertura" artist:"GC"': [{"id": "t1", "artists": [{"name": "GC"}], "popularity": 20}],
+        'track:"Hit" artist:"GC"': [{"id": "t2", "artists": [{"name": "GC"}], "popularity": 95}],
+        'track:"Bis" artist:"GC"': [{"id": "t3", "artists": [{"name": "GC"}], "popularity": 60}],
+    }))
+    show = Show(artist="GC", songs=[Song("Abertura", "GC"), Song("Hit", "GC"), Song("Bis", "GC")])
+
+    sp_u.create_playlist_with_songs(show, "P")
+
+    assert fake.adicionadas == ["t2", "t3", "t1"]        # popularidade, não setlist
+
+
+def test_ordem_usa_plays_da_setlist_media(usar):
+    """Na média, o Song carrega em quantos shows apareceu."""
+    fake = usar(FakeSpotify({
+        'track:"A" artist:"GC"': [{"id": "ta", "artists": [{"name": "GC"}]}],
+        'track:"B" artist:"GC"': [{"id": "tb", "artists": [{"name": "GC"}]}],
+    }))
+    show = Show(artist="GC", songs=[Song("A", "GC", plays=2), Song("B", "GC", plays=7)])
+
+    sp_u.create_playlist_with_songs(show, "P")
+
+    assert fake.adicionadas == ["tb", "ta"]              # sem popularidade, decide plays

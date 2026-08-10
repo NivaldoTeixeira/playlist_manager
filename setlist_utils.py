@@ -1,6 +1,6 @@
 import logging
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import ceil
 from statistics import mean
 from typing import Optional
@@ -31,6 +31,9 @@ class Song:
     # Artista a usar na busca do Spotify. Em covers é o artista original, não a
     # banda do show — procurar "Helter Skelter" com artist:"Mötley Crüe" não acha.
     search_artist: str
+    # Em quantos shows a música apareceu. Vale 1 para um show único e serve de
+    # critério de desempate na ordenação da playlist.
+    plays: int = 1
 
 
 @dataclass(frozen=True)
@@ -172,4 +175,4 @@ def average_setlist(shows: list[Show], min_frequency: float = FREQUENCIA_MINIMA)
         "Setlist média de %d shows: %d músicas (mínimo de %d aparições).",
         len(shows), len(frequentes), minimo,
     )
-    return [exemplar[chave] for chave in frequentes]
+    return [replace(exemplar[chave], plays=contagem[chave]) for chave in frequentes]

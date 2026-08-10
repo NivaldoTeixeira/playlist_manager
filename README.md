@@ -68,6 +68,21 @@ um show específico, em vez de devolver playlist vazia.
 > reiniciar entre a pergunta e o clique — comum no plano gratuito do Render — o bot
 > responde que a lista expirou e pede o pedido de novo.
 
+### A ordem da playlist
+
+A playlist **não segue a ordem do show** — isso entregaria o roteiro de quem ainda vai
+ao concerto. A ordenação usa um critério em cascata (`_ordenar()` em `spotify_utils.py`):
+
+1. **Popularidade no Spotify** (campo `popularity`, 0–100, baseado no total de
+   reproduções e em quão recentes elas são) — da mais tocada para a menos;
+2. **Quantas vezes a música apareceu** nos shows considerados — relevante na setlist
+   média, onde uma música de todo show vem antes de uma ocasional;
+3. **Ordem alfabética.**
+
+A chave de ordenação é composta, então a cascata acontece naturalmente: sem
+popularidade todas empatam e o número de aparições decide; num show único todas têm
+uma aparição e sobra o nome.
+
 ### Como as faixas são encontradas
 
 Nome de música em setlist raramente casa de primeira com o catálogo do Spotify, então

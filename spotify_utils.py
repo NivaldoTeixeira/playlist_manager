@@ -1,5 +1,6 @@
 import logging
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 import spotipy
@@ -102,9 +103,10 @@ def _e_sistemico(e: BaseException) -> bool:
     return isinstance(status, int) and (status in (401, 403, 429) or status >= 500)
 
 
-def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> Optional[str]:
-    """ID da faixa no Spotify, ou None se as consultas rodaram e não acharam.
+def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> Optional[dict]:
+    """A faixa encontrada no Spotify, ou None se as consultas não acharam nada.
 
+    Devolve o item cru da API para o chamador aproveitar `popularity` além do id.
     Levanta BuscaIndisponivel quando nenhuma consulta chegou a rodar, para não
     reportar "não achei essa música" no que na verdade é falha do Spotify.
     """
@@ -130,12 +132,39 @@ def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> Optional[str]:
         # artista (cover, tributo, karaokê).
         for item in items:
             if any(a.get("name", "").casefold() == artista_alvo for a in item.get("artists", [])):
-                return item["id"]
-        return items[0]["id"]
+                return item
+        return items[0]
 
     if not rodou_alguma:
         raise BuscaIndisponivel(song.name)
     return None
+
+
+# ---------- ORDENAÇÃO DA PLAYLIST ----------
+@dataclass(frozen=True)
+class _Faixa:
+    track_id: str
+    popularidade: int
+    plays: int
+    nome: str
+
+
+def _ordenar(faixas: list[_Faixa]) -> list[_Faixa]:
+    """Ordena a playlist sem seguir a ordem do show, que estraga a surpresa.
+
+    Critério em cascata, do mais para o menos informativo:
+    1. popularidade no Spotify, da mais tocada para a menos;
+    2. quantas vezes a música apareceu nos shows considerados;
+    3. ordem alfabética.
+
+    A chave composta já produz essa cascata: sem popularidade todos empatam em 0
+    e o número de aparições decide; num show único todos têm uma aparição e sobra
+    o nome.
+    """
+    return sorted(
+        faixas,
+        key=lambda f: (-f.popularidade, -f.plays, f.nome.casefold()),
+    )
 
 
 # ---------- SPOTIFY: CRIAR PLAYLIST ----------
@@ -149,12 +178,12 @@ def create_playlist_with_songs(
     """
     sp = get_spotify_client()
 
-    track_ids: list[str] = []
+    encontradas: list[_Faixa] = []
     vistos: set[str] = set()
     faltando: list[str] = []
     # A mesma música pode aparecer duas vezes (bis, medley). Guardar o resultado
     # evita repetir a busca e evita listá-la duas vezes como não encontrada.
-    resolvidas: dict[tuple[str, str], Optional[str]] = {}
+    resolvidas: dict[tuple[str, str], Optional[dict]] = {}
     indisponiveis = 0
 
     for song in show.songs:
@@ -162,17 +191,26 @@ def create_playlist_with_songs(
         if chave in resolvidas:
             continue
         try:
-            tid = _buscar_faixa(sp, song)
+            item = _buscar_faixa(sp, song)
         except BuscaIndisponivel:
             indisponiveis += 1
-            tid = None
-        resolvidas[chave] = tid
+            item = None
+        resolvidas[chave] = item
 
-        if not tid:
+        if not item:
             faltando.append(song.name)
-        elif tid not in vistos:
-            vistos.add(tid)
-            track_ids.append(tid)
+        elif item["id"] not in vistos:
+            vistos.add(item["id"])
+            encontradas.append(_Faixa(
+                track_id=item["id"],
+                # Popularidade do Spotify: 0-100, pelo total de reproduções e o
+                # quão recentes elas são. Ausente vira 0 e cai para o desempate.
+                popularidade=item.get("popularity") or 0,
+                plays=song.plays,
+                nome=song.name,
+            ))
+
+    track_ids = [f.track_id for f in _ordenar(encontradas)]
 
     # Se nada foi achado e houve falha de busca, o problema é o Spotify, não o
     # repertório: sobe o erro em vez de dizer que nenhuma música existe.
@@ -190,7 +228,7 @@ def create_playlist_with_songs(
         return None, 0, faltando
 
     name = playlist_name or f"Setlist {show.artist}"
-    descricao = f"{show.describe()} | By NT77" if show.describe() else "By NT77"
+    descricao = f"{show.describe()} | Sem spoiler: ordem por popularidade | By NT77"
     try:
         me = sp.current_user()["id"]
         playlist = sp.user_playlist_create(user=me, name=name, public=True, description=descricao)
