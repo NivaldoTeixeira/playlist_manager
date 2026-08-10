@@ -8,6 +8,7 @@ from math import ceil
 import requests
 
 from playlist_manager.config import SETLIST_KEY
+from playlist_manager.errors import SetlistIndisponivel
 from playlist_manager.models import Show, Song
 
 logger = logging.getLogger("playlist-bot")
@@ -20,10 +21,6 @@ SHOWS_RECENTES = 10
 # Fração dos shows em que a música precisa aparecer para entrar na setlist média.
 # Abaixo disso a média vira uma lista inchada de raridades de uma noite só.
 FREQUENCIA_MINIMA = 0.5
-
-
-class SetlistIndisponivel(RuntimeError):
-    """A setlist.fm não respondeu. Diferente de não existir show cadastrado."""
 
 
 def _parse_songs(setlist: dict, artista_do_show: str) -> list[Song]:

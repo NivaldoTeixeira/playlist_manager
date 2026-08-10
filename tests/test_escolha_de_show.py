@@ -6,7 +6,7 @@ import types
 import pytest
 
 import playlist_manager.telegram_handlers as th
-from playlist_manager.integrations.spotify import SpotifyIndisponivel
+from playlist_manager.errors import SpotifyIndisponivel
 from playlist_manager.models import Show, Song
 
 CHAT_ID = 42

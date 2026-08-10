@@ -14,6 +14,7 @@ from playlist_manager.config import (
     SPOTIPY_CLIENT_SECRET,
     SPOTIPY_REDIRECT_URI,
 )
+from playlist_manager.errors import SpotifyIndisponivel
 from playlist_manager.models import Show, Song
 
 logger = logging.getLogger("playlist-bot")
@@ -36,12 +37,13 @@ _RUIDO = re.compile(
 _ASPAS = str.maketrans({"“": "", "”": "", '"': "", "‘": "'", "’": "'"})
 
 
-class SpotifyIndisponivel(RuntimeError):
-    """Não deu para falar com o Spotify: credencial, cota ou serviço fora."""
-
-
 class BuscaIndisponivel(Exception):
-    """Nenhuma consulta chegou a rodar — problema no Spotify, não música ausente."""
+    """Nenhuma consulta chegou a rodar — problema no Spotify, não música ausente.
+
+    Fica aqui, e não em `errors`, porque nunca sai deste módulo: sinaliza uma
+    música específica para `create_playlist_with_songs`, que decide se o caso
+    vira SpotifyIndisponivel para o usuário.
+    """
 
 
 # ---------- SPOTIFY HELPERS ----------

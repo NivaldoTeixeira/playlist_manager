@@ -7,16 +7,17 @@ from uuid import uuid4
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from playlist_manager import messages
 from playlist_manager.config import ALLOWED_TELEGRAM_IDS
-from playlist_manager.integrations.llm import InterpretacaoIndisponivel, parse_request
+from playlist_manager.errors import mensagem_de
+from playlist_manager.integrations.llm import parse_request
 from playlist_manager.integrations.setlist_fm import (
     SHOWS_RECENTES,
-    SetlistIndisponivel,
     average_setlist,
     get_recent_shows,
     get_setlist,
 )
-from playlist_manager.integrations.spotify import SpotifyIndisponivel, create_playlist_with_songs
+from playlist_manager.integrations.spotify import create_playlist_with_songs
 from playlist_manager.models import Show
 
 logger = logging.getLogger("playlist-bot")
@@ -50,7 +51,7 @@ def somente_autorizados(handler):
                 if chat is not None:
                     await context.bot.send_message(
                         chat_id=chat.id,
-                        text="Esse bot é privado 🙃 Fala com o dono se quiser acesso.",
+                        text=messages.NAO_AUTORIZADO,
                     )
                 return
         return await handler(update, context)
@@ -60,27 +61,7 @@ def somente_autorizados(handler):
 
 @somente_autorizados
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🎵 Oi! Qual playlist quer criar? Me fale o nome da banda, a cidade e ano "
-        "do show que monto pra vc. \n"
-        "Ex: 'Playlist do Good Charlotte, São Paulo 2025'\n\n"
-        "Se não disser cidade nem ano, eu te mostro os últimos shows para escolher — "
-        "ou monto a setlist média do artista."
-    )
-
-
-def _mensagem_de_erro(exc: BaseException) -> str:
-    """Traduz a falha para algo acionável, em vez de um 'deu erro' genérico."""
-    if isinstance(exc, InterpretacaoIndisponivel):
-        return ("Não consegui interpretar seu pedido agora — o serviço de IA não respondeu. "
-                "Tenta de novo daqui a pouco? 😬")
-    if isinstance(exc, SetlistIndisponivel):
-        return ("A setlist.fm não está respondendo agora, então não consigo buscar o show. "
-                "Tenta de novo daqui a pouco? 😬")
-    if isinstance(exc, SpotifyIndisponivel):
-        return ("Não consegui falar com o Spotify — a autorização pode ter vencido. "
-                "Se persistir, refaça o /login e atualize o SPOTIFY_REFRESH_TOKEN. 😬")
-    return "Deu erro aqui do meu lado... tenta de novo daqui a pouco? 😬"
+    await update.message.reply_text(messages.BOAS_VINDAS)
 
 
 def _guardar_menu(context: ContextTypes.DEFAULT_TYPE, artist: str, shows: list[Show]) -> str:
@@ -107,28 +88,20 @@ def _montar_menu(shows: list[Show], token: str) -> InlineKeyboardMarkup:
 
 async def _criar_e_responder(responder, show: Show, nome: str):
     """Monta a playlist e responde com o link e o que ficou de fora."""
-    await responder(f"Booa, criando “{nome}” no Spotify...")
+    await responder(messages.criando_playlist(nome))
 
     url, adicionadas, faltando = await asyncio.to_thread(create_playlist_with_songs, show, nome)
     if not url:
-        await responder("Não encontrei nenhuma dessas músicas no Spotify... Sorry 😬")
+        await responder(messages.NADA_NO_SPOTIFY)
         return
-
-    resposta = f"Tá na mão ({adicionadas} músicas): {url}"
-    if faltando:
-        # Antes as músicas sem match sumiam caladas e a playlist vinha menor
-        # que a setlist sem explicação.
-        amostra = ", ".join(faltando[:5])
-        resto = f" e mais {len(faltando) - 5}" if len(faltando) > 5 else ""
-        resposta += f"\n\nNão achei no Spotify: {amostra}{resto}."
-    await responder(resposta)
+    await responder(messages.playlist_pronta(url, adicionadas, faltando))
 
 
 @somente_autorizados
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     responder = update.message.reply_text
-    await responder("Deixa eu ver o que eu acho... 🔎")
+    await responder(messages.PROCURANDO)
     try:
         # openai, requests e spotipy são síncronos e um pedido leva dezenas de
         # segundos (uma busca no Spotify por música). Chamá-los direto travaria o
@@ -136,7 +109,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # timeout do Telegram que a fila de updates existe para evitar.
         artist, city, year = await asyncio.to_thread(parse_request, text)
         if not artist:
-            await responder("Não entendi o artista... Confere o nome e tenta de novo, pfvr?")
+            await responder(messages.ARTISTA_NAO_ENTENDIDO)
             return
 
         # Pedido específico ("São Paulo 2025") continua indo direto ao ponto;
@@ -144,27 +117,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if city or year:
             show = await asyncio.to_thread(get_setlist, artist, city, year)
             if show is None:
-                await responder("Não achei nenhuma setlist 😬")
+                await responder(messages.SEM_SETLIST)
                 return
-            await responder(f"Achei: {show.describe()} ({len(show.songs)} músicas).")
+            await responder(messages.achei_o_show(show))
             nome = f"Setlist {artist} {city or ''} {year or ''}".strip()
             await _criar_e_responder(responder, show, nome)
             return
 
         shows = await asyncio.to_thread(get_recent_shows, artist, None, None, SHOWS_RECENTES)
         if not shows:
-            await responder("Não achei nenhuma setlist 😬")
+            await responder(messages.SEM_SETLIST)
             return
 
         token = _guardar_menu(context, artist, shows)
         await responder(
-            f"Achei os {len(shows)} shows mais recentes do {artist}. "
-            "Escolhe um, ou pega a setlist média:",
+            messages.escolha_um_show(artist, len(shows)),
             reply_markup=_montar_menu(shows, token),
         )
     except Exception as e:
         logger.exception("Erro ao processar pedido: %r", text)
-        await responder(_mensagem_de_erro(e))
+        await responder(mensagem_de(e))
 
 
 def _interpretar(data: str) -> tuple[str, str, int | None]:
@@ -193,13 +165,13 @@ async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         acao, token, indice = _interpretar(query.data)
     except ValueError:
         logger.warning("Callback data não reconhecido: %r", query.data)
-        await responder("Não reconheci essa escolha 😅 Manda o pedido de novo?")
+        await responder(messages.ESCOLHA_NAO_RECONHECIDA)
         return
 
     menu = context.user_data.get("menus", {}).get(token)
     if menu is None:
         # user_data vive em memória: um restart do serviço leva as listas embora.
-        await responder("Essa lista expirou 😅 Manda o pedido de novo que eu busco os shows.")
+        await responder(messages.LISTA_EXPIROU)
         return
 
     # Montar a playlist leva dezenas de segundos; sem isso um toque duplo criaria
@@ -217,32 +189,26 @@ async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if acao == ESCOLHA_MEDIA:
             songs = average_setlist(shows)
             if not songs:
-                await responder(
-                    "Esses shows não têm repertório em comum suficiente para uma média. "
-                    "Escolhe um show específico?"
-                )
+                await responder(messages.SEM_REPERTORIO_COMUM)
                 return
             show = Show(artist=artist, songs=songs)
             nome = f"Setlist média {artist}"
-            await responder(
-                f"Setlist média do {artist}: {len(songs)} músicas que aparecem "
-                f"na maioria dos últimos {len(shows)} shows."
-            )
+            await responder(messages.media_montada(artist, len(songs), len(shows)))
         else:
             if not 0 <= indice < len(shows):
                 logger.warning("Índice fora da lista: %r", query.data)
-                await responder("Não reconheci essa escolha 😅 Manda o pedido de novo?")
+                await responder(messages.ESCOLHA_NAO_RECONHECIDA)
                 return
             show = shows[indice]
             nome = f"Setlist {artist} {show.city or ''} {show.date or ''}".strip()
-            await responder(f"Beleza: {show.describe()} ({len(show.songs)} músicas).")
+            await responder(messages.escolheu_o_show(show))
 
         # Fora do tratamento de escolha inválida: uma falha do Spotify aqui precisa
         # chegar como falha do Spotify, não como "não reconheci essa escolha".
         await _criar_e_responder(responder, show, nome)
     except Exception as e:
         logger.exception("Erro ao montar a escolha: %r", query.data)
-        await responder(_mensagem_de_erro(e))
+        await responder(mensagem_de(e))
     finally:
         em_andamento.discard(token)
 

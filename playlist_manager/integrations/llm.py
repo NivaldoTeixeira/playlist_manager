@@ -6,12 +6,9 @@ import logging
 from openai import OpenAI
 
 from playlist_manager.config import OPENAI_API_KEY
+from playlist_manager.errors import InterpretacaoIndisponivel
 
 logger = logging.getLogger("playlist-bot")
-
-
-class InterpretacaoIndisponivel(RuntimeError):
-    """Não deu para chamar o LLM: chave, cota ou serviço fora."""
 
 
 _oa_client = None

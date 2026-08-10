@@ -5,9 +5,11 @@ import types
 import pytest
 
 import playlist_manager.telegram_handlers as th
-from playlist_manager.integrations.llm import InterpretacaoIndisponivel
-from playlist_manager.integrations.setlist_fm import SetlistIndisponivel
-from playlist_manager.integrations.spotify import SpotifyIndisponivel
+from playlist_manager.errors import (
+    InterpretacaoIndisponivel,
+    SetlistIndisponivel,
+    SpotifyIndisponivel,
+)
 from playlist_manager.models import Show, Song
 
 
