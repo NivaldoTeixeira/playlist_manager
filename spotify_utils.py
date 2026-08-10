@@ -28,8 +28,10 @@ _RUIDO = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-# Aspas tipográficas quebram a query do Spotify; normaliza para a versão simples.
-_ASPAS = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'"})
+# Aspas duplas (retas ou tipográficas) são o delimitador de track:"..." — mantê-las
+# no termo quebra a query e a música vira "não encontrada", como em “Heroes”.
+# Apóstrofos são seguros dentro das aspas, só normaliza a forma tipográfica.
+_ASPAS = str.maketrans({"“": "", "”": "", '"': "", "‘": "'", "’": "'"})
 
 
 # ---------- SPOTIFY HELPERS ----------
@@ -78,17 +80,36 @@ def _consultas(song: Song) -> list[str]:
     return saida
 
 
+class BuscaIndisponivel(Exception):
+    """Nenhuma consulta chegou a rodar — problema no Spotify, não música ausente."""
+
+
+def _e_sistemico(e: BaseException) -> bool:
+    """Erro que vai afetar todas as buscas: credencial, cota ou Spotify fora."""
+    status = getattr(e, "http_status", None)
+    return isinstance(status, int) and (status in (401, 403, 429) or status >= 500)
+
+
 def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> Optional[str]:
-    """ID da faixa no Spotify, ou None se nenhuma consulta achou."""
+    """ID da faixa no Spotify, ou None se as consultas rodaram e não acharam.
+
+    Levanta BuscaIndisponivel quando nenhuma consulta chegou a rodar, para não
+    reportar "não achei essa música" no que na verdade é falha do Spotify.
+    """
     artista_alvo = song.search_artist.casefold()
+    rodou_alguma = False
 
     for q in _consultas(song):
         try:
             items = sp.search(q=q, limit=5, type="track").get("tracks", {}).get("items", [])
-        except Exception:
-            # Uma busca que falha não pode derrubar a playlist inteira.
-            logger.exception("Busca falhou no Spotify: %s", q)
+        except Exception as e:
+            # 401/403/429/5xx afetam toda a playlist: insistir nas próximas músicas
+            # só queima cota e atrasa o erro real.
+            if _e_sistemico(e):
+                raise
+            logger.warning("Busca falhou no Spotify (%s): %s", q, e)
             continue
+        rodou_alguma = True
         if not items:
             continue
 
@@ -100,6 +121,8 @@ def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> Optional[str]:
                 return item["id"]
         return items[0]["id"]
 
+    if not rodou_alguma:
+        raise BuscaIndisponivel(song.name)
     return None
 
 
@@ -117,16 +140,32 @@ def create_playlist_with_songs(
     track_ids: list[str] = []
     vistos: set[str] = set()
     faltando: list[str] = []
+    # A mesma música pode aparecer duas vezes (bis, medley). Guardar o resultado
+    # evita repetir a busca e evita listá-la duas vezes como não encontrada.
+    resolvidas: dict[tuple[str, str], Optional[str]] = {}
+    indisponiveis = 0
 
     for song in show.songs:
-        tid = _buscar_faixa(sp, song)
+        chave = (song.name, song.search_artist)
+        if chave in resolvidas:
+            continue
+        try:
+            tid = _buscar_faixa(sp, song)
+        except BuscaIndisponivel:
+            indisponiveis += 1
+            tid = None
+        resolvidas[chave] = tid
+
         if not tid:
             faltando.append(song.name)
-            continue
-        # A mesma música pode aparecer duas vezes (bis, medley).
-        if tid not in vistos:
+        elif tid not in vistos:
             vistos.add(tid)
             track_ids.append(tid)
+
+    # Se nada foi achado e houve falha de busca, o problema é o Spotify, não o
+    # repertório: sobe o erro em vez de dizer que nenhuma música existe.
+    if not track_ids and indisponiveis:
+        raise RuntimeError(f"Buscas no Spotify indisponíveis ({indisponiveis} de {len(resolvidas)}).")
 
     if faltando:
         logger.info("Não achei no Spotify: %s", ", ".join(faltando))

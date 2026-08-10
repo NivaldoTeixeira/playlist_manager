@@ -71,7 +71,9 @@ def _parse_show(setlist: dict) -> Show:
 def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = None) -> Optional[Show]:
     """Busca na setlist.fm o show mais recente que tenha músicas registradas.
 
-    Devolve None quando não há nenhum resultado aproveitável.
+    Devolve None quando a busca rodou e não há resultado aproveitável. Levanta
+    RuntimeError quando a API falhou — são coisas diferentes: mandar o usuário
+    tentar outro nome quando a setlist.fm está fora só rende tentativa inútil.
     """
     headers = {"x-api-key": SETLIST_KEY, "Accept": "application/json"}
     params = {"artistName": artist, "p": 1}
@@ -87,7 +89,7 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
         return None
     if r.status_code != 200:
         logger.error("Setlist.fm erro %s: %s", r.status_code, r.text[:200])
-        return None
+        raise RuntimeError(f"setlist.fm respondeu {r.status_code}")
 
     resultados = r.json().get("setlist", [])
     if not resultados:
