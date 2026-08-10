@@ -5,6 +5,7 @@ import types
 import pytest
 
 import playlist_manager.telegram_handlers as th
+from playlist_manager import service
 from playlist_manager.errors import (
     InterpretacaoIndisponivel,
     SetlistIndisponivel,
@@ -34,10 +35,10 @@ def show_exemplo(n=12):
 
 def rodar(monkeypatch, *, parse=None, setlist=None, playlist=None, texto=None):
     """Executa handle_text com as três integrações substituídas."""
-    monkeypatch.setattr(th, "parse_request",
+    monkeypatch.setattr(service, "parse_request",
                         parse or (lambda t: ("Good Charlotte", "São Paulo", "2025")))
-    monkeypatch.setattr(th, "get_setlist", setlist or (lambda a, c, y: show_exemplo()))
-    monkeypatch.setattr(th, "create_playlist_with_songs",
+    monkeypatch.setattr(service, "get_setlist", setlist or (lambda a, c, y: show_exemplo()))
+    monkeypatch.setattr(service, "create_playlist_with_songs",
                         playlist or (lambda s, n: ("http://sp/p1", 12, [])))
 
     msg = FakeMessage(texto) if texto else FakeMessage()
@@ -114,10 +115,10 @@ def test_nao_bloqueia_o_event_loop(monkeypatch):
     """As integrações são síncronas; travar o loop atrasaria /health e outros webhooks."""
     # Com cidade e ano o fluxo vai direto ao ponto, sem o menu de escolha — é o
     # caminho que encadeia as três chamadas bloqueantes.
-    monkeypatch.setattr(th, "parse_request",
+    monkeypatch.setattr(service, "parse_request",
                         lambda t: (time.sleep(0.4) or ("Good Charlotte", "São Paulo", "2025")))
-    monkeypatch.setattr(th, "get_setlist", lambda a, c, y: time.sleep(0.4) or show_exemplo())
-    monkeypatch.setattr(th, "create_playlist_with_songs",
+    monkeypatch.setattr(service, "get_setlist", lambda a, c, y: time.sleep(0.4) or show_exemplo())
+    monkeypatch.setattr(service, "create_playlist_with_songs",
                         lambda s, n: time.sleep(0.4) or ("http://sp/p1", 12, []))
 
     async def cenario():

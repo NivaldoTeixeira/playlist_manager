@@ -10,7 +10,7 @@ import types
 import pytest
 
 import playlist_manager.telegram_handlers as th
-from playlist_manager import config
+from playlist_manager import config, service
 
 DONO = 42
 ESTRANHO = 99
@@ -50,9 +50,9 @@ def contexto():
 def espiao(monkeypatch):
     """Registra se o fluxo real chegou a rodar."""
     chamadas = []
-    monkeypatch.setattr(th, "parse_request",
+    monkeypatch.setattr(service, "parse_request",
                         lambda t: chamadas.append(t) or ("Iron Maiden", None, None))
-    monkeypatch.setattr(th, "get_recent_shows", lambda a, c, y, lim: [])
+    monkeypatch.setattr(service, "get_recent_shows", lambda a, c, y, lim: [])
     return chamadas
 
 

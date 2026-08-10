@@ -1,4 +1,11 @@
-import asyncio
+"""A ponta do Telegram: traduz mensagem em pedido e resultado em texto.
+
+Aqui mora só o que é do Telegram — quem pode falar com o bot, os botões do menu,
+o estado por usuário e o tratamento de erro que vira resposta. A regra do pedido
+está em `service.py`, e é de propósito: ela não deveria mudar se um dia houvesse
+uma interface web.
+"""
+
 import logging
 from collections import OrderedDict
 from functools import wraps
@@ -7,17 +14,9 @@ from uuid import uuid4
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from playlist_manager import messages
+from playlist_manager import messages, service
 from playlist_manager.config import ALLOWED_TELEGRAM_IDS
 from playlist_manager.errors import mensagem_de
-from playlist_manager.integrations.llm import parse_request
-from playlist_manager.integrations.setlist_fm import (
-    SHOWS_RECENTES,
-    average_setlist,
-    get_recent_shows,
-    get_setlist,
-)
-from playlist_manager.integrations.spotify import create_playlist_with_songs
 from playlist_manager.models import Show
 
 logger = logging.getLogger("playlist-bot")
@@ -64,6 +63,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(messages.BOAS_VINDAS)
 
 
+# ---------- menu de escolha ----------
 def _guardar_menu(context: ContextTypes.DEFAULT_TYPE, artist: str, shows: list[Show]) -> str:
     """Guarda a lista sob um token e devolve o token para os botões carregarem."""
     menus = context.user_data.setdefault("menus", OrderedDict())
@@ -86,59 +86,6 @@ def _montar_menu(shows: list[Show], token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(botoes)
 
 
-async def _criar_e_responder(responder, show: Show, nome: str):
-    """Monta a playlist e responde com o link e o que ficou de fora."""
-    await responder(messages.criando_playlist(nome))
-
-    url, adicionadas, faltando = await asyncio.to_thread(create_playlist_with_songs, show, nome)
-    if not url:
-        await responder(messages.NADA_NO_SPOTIFY)
-        return
-    await responder(messages.playlist_pronta(url, adicionadas, faltando))
-
-
-@somente_autorizados
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    responder = update.message.reply_text
-    await responder(messages.PROCURANDO)
-    try:
-        # openai, requests e spotipy são síncronos e um pedido leva dezenas de
-        # segundos (uma busca no Spotify por música). Chamá-los direto travaria o
-        # event loop, segurando o /health e os webhooks seguintes — justamente o
-        # timeout do Telegram que a fila de updates existe para evitar.
-        artist, city, year = await asyncio.to_thread(parse_request, text)
-        if not artist:
-            await responder(messages.ARTISTA_NAO_ENTENDIDO)
-            return
-
-        # Pedido específico ("São Paulo 2025") continua indo direto ao ponto;
-        # só o pedido aberto ganha o menu de escolha.
-        if city or year:
-            show = await asyncio.to_thread(get_setlist, artist, city, year)
-            if show is None:
-                await responder(messages.SEM_SETLIST)
-                return
-            await responder(messages.achei_o_show(show))
-            nome = f"Setlist {artist} {city or ''} {year or ''}".strip()
-            await _criar_e_responder(responder, show, nome)
-            return
-
-        shows = await asyncio.to_thread(get_recent_shows, artist, None, None, SHOWS_RECENTES)
-        if not shows:
-            await responder(messages.SEM_SETLIST)
-            return
-
-        token = _guardar_menu(context, artist, shows)
-        await responder(
-            messages.escolha_um_show(artist, len(shows)),
-            reply_markup=_montar_menu(shows, token),
-        )
-    except Exception as e:
-        logger.exception("Erro ao processar pedido: %r", text)
-        await responder(mensagem_de(e))
-
-
 def _interpretar(data: str) -> tuple[str, str, int | None]:
     """Quebra o callback_data em (ação, token, índice). Levanta ValueError se torto."""
     partes = data.split(":")
@@ -147,6 +94,65 @@ def _interpretar(data: str) -> tuple[str, str, int | None]:
     if len(partes) == 3 and partes[0] == ESCOLHA_SHOW:
         return ESCOLHA_SHOW, partes[1], int(partes[2])
     raise ValueError(data)
+
+
+async def _remover_teclado(query) -> None:
+    """Tira os botões da mensagem; falha aqui não pode atrapalhar o pedido."""
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception as e:
+        logger.debug("Não consegui remover o teclado: %s", e)
+
+
+async def _criar_e_responder(responder, show: Show, nome: str) -> None:
+    """Monta a playlist e responde com o link e o que ficou de fora."""
+    await responder(messages.criando_playlist(nome))
+
+    playlist = await service.criar_playlist(show, nome)
+    if not playlist.criada:
+        await responder(messages.NADA_NO_SPOTIFY)
+        return
+    await responder(messages.playlist_pronta(
+        playlist.url, playlist.adicionadas, playlist.faltando
+    ))
+
+
+# ---------- handlers ----------
+@somente_autorizados
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    responder = update.message.reply_text
+    await responder(messages.PROCURANDO)
+    try:
+        pedido = await service.interpretar(text)
+        if not pedido.entendido:
+            await responder(messages.ARTISTA_NAO_ENTENDIDO)
+            return
+
+        # Pedido específico ("São Paulo 2025") vai direto ao ponto; só o pedido
+        # aberto ganha o menu de escolha.
+        if pedido.especifico:
+            show = await service.show_do_pedido(pedido)
+            if show is None:
+                await responder(messages.SEM_SETLIST)
+                return
+            await responder(messages.achei_o_show(show))
+            await _criar_e_responder(responder, show, service.nome_do_pedido(pedido))
+            return
+
+        shows = await service.shows_recentes(pedido.artist)
+        if not shows:
+            await responder(messages.SEM_SETLIST)
+            return
+
+        token = _guardar_menu(context, pedido.artist, shows)
+        await responder(
+            messages.escolha_um_show(pedido.artist, len(shows)),
+            reply_markup=_montar_menu(shows, token),
+        )
+    except Exception as e:
+        logger.exception("Erro ao processar pedido: %r", text)
+        await responder(mensagem_de(e))
 
 
 @somente_autorizados
@@ -187,20 +193,19 @@ async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         artist, shows = menu["artist"], menu["shows"]
 
         if acao == ESCOLHA_MEDIA:
-            songs = average_setlist(shows)
-            if not songs:
+            show = service.setlist_media(artist, shows)
+            if show is None:
                 await responder(messages.SEM_REPERTORIO_COMUM)
                 return
-            show = Show(artist=artist, songs=songs)
-            nome = f"Setlist média {artist}"
-            await responder(messages.media_montada(artist, len(songs), len(shows)))
+            nome = service.nome_da_media(artist)
+            await responder(messages.media_montada(artist, len(show.songs), len(shows)))
         else:
             if not 0 <= indice < len(shows):
                 logger.warning("Índice fora da lista: %r", query.data)
                 await responder(messages.ESCOLHA_NAO_RECONHECIDA)
                 return
             show = shows[indice]
-            nome = f"Setlist {artist} {show.city or ''} {show.date or ''}".strip()
+            nome = service.nome_do_show(artist, show)
             await responder(messages.escolheu_o_show(show))
 
         # Fora do tratamento de escolha inválida: uma falha do Spotify aqui precisa
@@ -211,11 +216,3 @@ async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await responder(mensagem_de(e))
     finally:
         em_andamento.discard(token)
-
-
-async def _remover_teclado(query) -> None:
-    """Tira os botões da mensagem; falha aqui não pode atrapalhar o pedido."""
-    try:
-        await query.edit_message_reply_markup(reply_markup=None)
-    except Exception as e:
-        logger.debug("Não consegui remover o teclado: %s", e)

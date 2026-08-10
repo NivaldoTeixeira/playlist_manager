@@ -1,7 +1,9 @@
 """Testes das rotas HTTP.
 
 O TestClient é usado sem `with`: entrar no contexto dispara o lifespan, que chama
-`getMe` na API do Telegram — os testes não fazem rede.
+`getMe` na API do Telegram — os testes não fazem rede. O bot é montado à mão em
+`app.state`, que é justamente o que `build_telegram_app()` permite: montar sem
+inicializar.
 """
 
 import pytest
@@ -12,6 +14,7 @@ from playlist_manager import main
 
 @pytest.fixture
 def client():
+    main.app.state.tg_app = main.build_telegram_app()
     return TestClient(main.app)
 
 
@@ -50,7 +53,7 @@ def test_webhook_rejeita_segredo_errado(client):
 
 def test_webhook_enfileira_e_responde_na_hora(client):
     """Processar antes de responder estouraria o timeout do Telegram."""
-    antes = main.tg_app.update_queue.qsize()
+    antes = main.app.state.tg_app.update_queue.qsize()
     payload = {
         "update_id": 1,
         "message": {
@@ -63,4 +66,12 @@ def test_webhook_enfileira_e_responde_na_hora(client):
     }
     r = client.post(f"/webhook/{main.WEBHOOK_SECRET}", json=payload)
     assert r.status_code == 200
-    assert main.tg_app.update_queue.qsize() == antes + 1
+    assert main.app.state.tg_app.update_queue.qsize() == antes + 1
+
+
+def test_webhook_antes_do_bot_pronto(client):
+    """503 e não 500: assim o Telegram tenta de novo em vez de descartar o update."""
+    if hasattr(main.app.state, "tg_app"):
+        del main.app.state.tg_app
+    r = client.post(f"/webhook/{main.WEBHOOK_SECRET}", json={"update_id": 1})
+    assert r.status_code == 503

@@ -6,6 +6,7 @@ import types
 import pytest
 
 import playlist_manager.telegram_handlers as th
+from playlist_manager import service
 from playlist_manager.errors import SpotifyIndisponivel
 from playlist_manager.models import Show, Song
 
@@ -70,15 +71,15 @@ def integracoes(monkeypatch):
     """Substitui as três integrações; devolve o registro das chamadas."""
     chamadas = {"playlists": []}
 
-    monkeypatch.setattr(th, "parse_request", lambda t: ("Iron Maiden", None, None))
-    monkeypatch.setattr(th, "get_recent_shows", lambda a, c, y, lim: shows_exemplo())
-    monkeypatch.setattr(th, "get_setlist", lambda a, c, y: shows_exemplo()[0])
+    monkeypatch.setattr(service, "parse_request", lambda t: ("Iron Maiden", None, None))
+    monkeypatch.setattr(service, "get_recent_shows", lambda a, c, y, lim: shows_exemplo())
+    monkeypatch.setattr(service, "get_setlist", lambda a, c, y: shows_exemplo()[0])
 
     def criar(show, nome):
         chamadas["playlists"].append((show, nome))
         return "http://sp/p1", len(show.songs), []
 
-    monkeypatch.setattr(th, "create_playlist_with_songs", criar)
+    monkeypatch.setattr(service, "create_playlist_with_songs", criar)
     return chamadas
 
 
@@ -131,7 +132,7 @@ def test_callback_data_cabe_no_limite_do_telegram(integracoes, context):
 
 def test_pedido_com_cidade_ou_ano_nao_pergunta(monkeypatch, integracoes, context):
     """Pedido específico continua indo direto ao ponto."""
-    monkeypatch.setattr(th, "parse_request", lambda t: ("Iron Maiden", "São Paulo", "2024"))
+    monkeypatch.setattr(service, "parse_request", lambda t: ("Iron Maiden", "São Paulo", "2024"))
     msg = FakeMessage()
     texto(msg, context)
 
@@ -140,7 +141,7 @@ def test_pedido_com_cidade_ou_ano_nao_pergunta(monkeypatch, integracoes, context
 
 
 def test_sem_shows_nao_oferece_menu(monkeypatch, integracoes, context):
-    monkeypatch.setattr(th, "get_recent_shows", lambda a, c, y, lim: [])
+    monkeypatch.setattr(service, "get_recent_shows", lambda a, c, y, lim: [])
     msg = FakeMessage()
     texto(msg, context)
     assert "Não achei nenhuma setlist" in msg.enviadas[-1]
@@ -188,8 +189,8 @@ def test_menu_antigo_usa_a_lista_dele(monkeypatch, integracoes, context):
     texto(msg1, context)
     token1 = token_do_menu(msg1)
 
-    monkeypatch.setattr(th, "parse_request", lambda t: ("Metallica", None, None))
-    monkeypatch.setattr(th, "get_recent_shows", lambda a, c, y, lim: shows_exemplo(artista="Metallica"))
+    monkeypatch.setattr(service, "parse_request", lambda t: ("Metallica", None, None))
+    monkeypatch.setattr(service, "get_recent_shows", lambda a, c, y, lim: shows_exemplo(artista="Metallica"))
     msg2 = FakeMessage("Playlist do Metallica")
     texto(msg2, context)
     assert token_do_menu(msg2) != token1
@@ -220,7 +221,7 @@ def test_toque_duplo_cria_uma_playlist_so(monkeypatch, integracoes, context):
         integracoes["playlists"].append((show, nome))
         return "http://sp/p1", 2, []
 
-    monkeypatch.setattr(th, "create_playlist_with_songs", criar_lento)
+    monkeypatch.setattr(service, "create_playlist_with_songs", criar_lento)
     clique(data, context, msg)
 
     assert len(integracoes["playlists"]) == 1
@@ -253,7 +254,7 @@ def test_falha_do_spotify_tem_mensagem_propria(monkeypatch, integracoes, context
     def explode(show, nome):
         raise SpotifyIndisponivel("invalid_grant")
 
-    monkeypatch.setattr(th, "create_playlist_with_songs", explode)
+    monkeypatch.setattr(service, "create_playlist_with_songs", explode)
     clique(f"show:{token_do_menu(msg)}:0", context, msg)
 
     assert "Spotify" in context.bot.enviadas[-1]
@@ -268,7 +269,7 @@ def test_keyerror_do_spotify_nao_vira_escolha_invalida(monkeypatch, integracoes,
     def explode(show, nome):
         raise KeyError("external_urls")
 
-    monkeypatch.setattr(th, "create_playlist_with_songs", explode)
+    monkeypatch.setattr(service, "create_playlist_with_songs", explode)
     clique(f"show:{token_do_menu(msg)}:0", context, msg)
 
     assert "Deu erro aqui do meu lado" in context.bot.enviadas[-1]
@@ -292,7 +293,7 @@ def test_media_sem_repertorio_comum_avisa(monkeypatch, integracoes, context):
         Show(artist="X", date=f"0{i}/01/2025", songs=[Song(f"S{i}", "X")])
         for i in range(4)
     ]
-    monkeypatch.setattr(th, "get_recent_shows", lambda a, c, y, lim: sem_comum)
+    monkeypatch.setattr(service, "get_recent_shows", lambda a, c, y, lim: sem_comum)
     msg = FakeMessage()
     texto(msg, context)
     clique(f"media:{token_do_menu(msg)}", context, msg)
