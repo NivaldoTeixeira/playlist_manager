@@ -37,6 +37,28 @@ a resposta atrasasse, o Telegram reenviaria o mesmo update e criaria playlist du
 | `setlist_utils.py` | Consulta à API da setlist.fm |
 | `spotify_utils.py` | OAuth do Spotify e criação da playlist |
 
+### Como o show é escolhido
+
+A busca na setlist.fm devolve vários shows, e é comum os primeiros virem **sem
+músicas registradas** (show cancelado, ou que ninguém cadastrou ainda). O bot
+percorre os resultados e usa o primeiro que de fato tenha setlist, dizendo na
+resposta qual show pegou (`Achei: Espaço Unimed - São Paulo, 31/08/2025`).
+
+### Como as faixas são encontradas
+
+Nome de música em setlist raramente casa de primeira com o catálogo do Spotify, então
+a busca vai do mais específico ao mais tolerante e para no primeiro acerto:
+
+1. `track:"nome exato" artist:"artista"`
+2. `track:"nome limpo" artist:"artista"` — sem sufixos como `- Live`, `(Remastered)`, `(Ao Vivo)`
+3. `nome limpo artista` — texto livre, tolera pontuação e grafia diferentes
+4. `nome limpo` — último recurso
+
+Entre os resultados o bot prefere o de artista correspondente, para não trazer versão
+de tributo ou karaokê. **Covers** usam o artista original da música, não a banda do
+show. Músicas repetidas (bis, medley) entram uma vez só, e as que não foram
+encontradas são listadas na resposta em vez de sumirem caladas.
+
 ## Variáveis de ambiente
 
 Todas são obrigatórias. Veja [`.env.example`](.env.example) para o formato.
