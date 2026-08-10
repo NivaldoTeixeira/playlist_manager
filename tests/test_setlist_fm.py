@@ -3,7 +3,7 @@ import json
 import pytest
 import requests
 
-import setlist_utils as su
+import playlist_manager.integrations.setlist_fm as su
 
 
 class FakeResp:

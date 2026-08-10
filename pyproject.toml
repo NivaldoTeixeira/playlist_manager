@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "playlist-manager"
+version = "1.0.0"
+description = "Bot de Telegram que monta playlists no Spotify a partir de setlists reais de shows."
+requires-python = "==3.11.*"
+# As dependências ficam fixadas no requirements.txt, não aqui: o deploy instala
+# por lá e duplicar a lista faria as duas versões divergirem sozinhas.
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = ["playlist_manager", "playlist_manager.integrations"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+# O pacote fica na raiz do repositório; isso o deixa importável sem instalar.
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning:starlette.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E/W estilo, F erros reais, I ordem dos imports, UP sintaxe antiga,
+# B armadilhas comuns, SIM simplificações.
+select = ["E", "W", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Os testes usam nomes internos (_limpar, _ordenar) de propósito.
+"tests/*" = ["E501"]

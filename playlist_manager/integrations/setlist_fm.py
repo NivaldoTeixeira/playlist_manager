@@ -1,12 +1,14 @@
+"""Consulta à API da setlist.fm e o cálculo da setlist média."""
+
 import logging
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from math import ceil
-from typing import Optional
 
 import requests
 
-from config import SETLIST_KEY
+from playlist_manager.config import SETLIST_KEY
+from playlist_manager.models import Show, Song
 
 logger = logging.getLogger("playlist-bot")
 
@@ -22,33 +24,6 @@ FREQUENCIA_MINIMA = 0.5
 
 class SetlistIndisponivel(RuntimeError):
     """A setlist.fm não respondeu. Diferente de não existir show cadastrado."""
-
-
-@dataclass(frozen=True)
-class Song:
-    name: str
-    # Artista a usar na busca do Spotify. Em covers é o artista original, não a
-    # banda do show — procurar "Helter Skelter" com artist:"Mötley Crüe" não acha.
-    search_artist: str
-    # Em quantos shows a música apareceu. Vale 1 para um show único e serve de
-    # critério de desempate na ordenação da playlist.
-    plays: int = 1
-
-
-@dataclass(frozen=True)
-class Show:
-    artist: str
-    songs: list[Song] = field(default_factory=list)
-    venue: Optional[str] = None
-    city: Optional[str] = None
-    date: Optional[str] = None
-    url: Optional[str] = None
-
-    def describe(self) -> str:
-        """Descrição curta do show, para o bot dizer qual setlist usou."""
-        local = " - ".join(p for p in (self.venue, self.city) if p)
-        partes = [p for p in (local, self.date) if p]
-        return ", ".join(partes) if partes else self.artist
 
 
 def _parse_songs(setlist: dict, artista_do_show: str) -> list[Song]:
@@ -86,8 +61,8 @@ def _parse_show(setlist: dict) -> Show:
 
 def get_recent_shows(
     artist: str,
-    city: Optional[str] = None,
-    year: Optional[str] = None,
+    city: str | None = None,
+    year: str | None = None,
     limit: int = SHOWS_RECENTES,
 ) -> list[Show]:
     """Shows recentes do artista que tenham músicas registradas, mais novo primeiro.
@@ -133,7 +108,7 @@ def get_recent_shows(
     return shows[:limit]
 
 
-def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = None) -> Optional[Show]:
+def get_setlist(artist: str, city: str | None = None, year: str | None = None) -> Show | None:
     """O show recente mais relevante, ou None se não houver nenhum aproveitável."""
     shows = get_recent_shows(artist, city, year, limit=1)
     if not shows:

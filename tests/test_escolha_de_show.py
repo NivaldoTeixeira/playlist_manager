@@ -5,9 +5,9 @@ import types
 
 import pytest
 
-import telegram_handlers as th
-from setlist_utils import Show, Song
-from spotify_utils import SpotifyIndisponivel
+import playlist_manager.telegram_handlers as th
+from playlist_manager.integrations.spotify import SpotifyIndisponivel
+from playlist_manager.models import Show, Song
 
 CHAT_ID = 42
 

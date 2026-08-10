@@ -1,8 +1,8 @@
 import pytest
 import spotipy
 
-import spotify_utils as sp_u
-from setlist_utils import Show, Song
+import playlist_manager.integrations.spotify as sp_u
+from playlist_manager.models import Show, Song
 
 
 def faixa(tid, artista):
@@ -149,7 +149,7 @@ def test_repetida_conta_uma_vez_e_busca_uma_vez(usar):
 
 
 def test_repetida_ausente_listada_uma_vez(usar):
-    fake = usar(FakeSpotify({}))
+    usar(FakeSpotify({}))
     show = Show(artist="GC", songs=[Song("X", "GC")] * 3)
     url, adicionadas, faltando = sp_u.create_playlist_with_songs(show, "P")
     assert faltando == ["X"]

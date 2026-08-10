@@ -9,8 +9,8 @@ import types
 
 import pytest
 
-import config
-import telegram_handlers as th
+import playlist_manager.telegram_handlers as th
+from playlist_manager import config
 
 DONO = 42
 ESTRANHO = 99

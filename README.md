@@ -9,7 +9,7 @@ e cria a playlist na sua conta do Spotify.
 ## Como funciona
 
 ```
-Telegram ──POST /webhook/<segredo>──▶ FastAPI (main.py)
+Telegram ──POST /webhook/<segredo>──▶ FastAPI (playlist_manager/main.py)
                                           │
                                           ▼
                               update_queue do python-telegram-bot
@@ -19,7 +19,7 @@ Telegram ──POST /webhook/<segredo>──▶ FastAPI (main.py)
                                           │
               ┌───────────────────────────┼───────────────────────────┐
               ▼                           ▼                           ▼
-      openai_utils.py              setlist_utils.py           spotify_utils.py
+  integrations/llm.py       integrations/setlist_fm.py   integrations/spotify.py
    extrai artist/city/year       busca a setlist do show    cria a playlist e
    do texto (gpt-4o-mini)          (API setlist.fm)         adiciona as faixas
 ```
@@ -30,12 +30,17 @@ a resposta atrasasse, o Telegram reenviaria o mesmo update e criaria playlist du
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `main.py` | App FastAPI, rotas e ciclo de vida do bot |
-| `config.py` | Leitura das variáveis de ambiente |
-| `telegram_handlers.py` | Comandos e mensagens do Telegram |
-| `openai_utils.py` | Extração de artista/cidade/ano via LLM |
-| `setlist_utils.py` | Consulta à API da setlist.fm |
-| `spotify_utils.py` | OAuth do Spotify e criação da playlist |
+| `playlist_manager/main.py` | App FastAPI, rotas e ciclo de vida do bot |
+| `playlist_manager/config.py` | Leitura das variáveis de ambiente |
+| `playlist_manager/models.py` | `Show` e `Song`, o vocabulário comum |
+| `playlist_manager/telegram_handlers.py` | Comandos e mensagens do Telegram |
+| `playlist_manager/integrations/llm.py` | Extração de artista/cidade/ano via LLM |
+| `playlist_manager/integrations/setlist_fm.py` | Consulta à API da setlist.fm |
+| `playlist_manager/integrations/spotify.py` | OAuth do Spotify e criação da playlist |
+
+A dependência aponta sempre para dentro: `integrations` não conhece o Telegram, e
+`models` não conhece ninguém. Trocar a setlist.fm por outra fonte, por exemplo, é
+mexer em um arquivo só.
 
 ### Como o show é escolhido
 
@@ -76,7 +81,7 @@ um show específico, em vez de devolver playlist vazia.
 ### A ordem da playlist
 
 A playlist **não segue a ordem do show** — isso entregaria o roteiro de quem ainda vai
-ao concerto. A ordenação usa um critério em cascata (`_ordenar()` em `spotify_utils.py`):
+ao concerto. A ordenação usa um critério em cascata (`_ordenar()` em `integrations/spotify.py`):
 
 1. **Popularidade no Spotify** (campo `popularity`, 0–100, baseado no total de
    reproduções e em quão recentes elas são) — da mais tocada para a menos;
@@ -158,7 +163,7 @@ pip install -r requirements.txt
 
 cp .env.example .env    # preencha os valores
 
-uvicorn main:app --reload --port 8000
+uvicorn playlist_manager.main:app --reload --port 8000
 ```
 
 Como o Telegram só entrega webhook em URL pública HTTPS, para testar o bot de verdade
@@ -174,7 +179,7 @@ curl localhost:8000/health
 O [`Procfile`](Procfile) já define o comando de start:
 
 ```
-web: uvicorn main:app --host 0.0.0.0 --port $PORT
+web: uvicorn playlist_manager.main:app --host 0.0.0.0 --port $PORT
 ```
 
 1. **Build Command:** `pip install -r requirements.txt`
@@ -212,7 +217,7 @@ Feito **uma vez só** (o refresh token não expira sozinho):
 4. Salve o valor nas variáveis de ambiente do Render e reinicie o serviço
 
 Se o `/callback` responder que não veio `refresh_token`, é porque o Spotify reusou uma
-autorização anterior. Ajuste `show_dialog=True` em `spotify_utils.make_auth_manager()`
+autorização anterior. Ajuste `show_dialog=True` em `integrations/spotify.py`, em `make_auth_manager()`
 e repita o fluxo.
 
 ### Registrando o webhook do Telegram

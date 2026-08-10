@@ -2,23 +2,22 @@ import asyncio
 import logging
 from collections import OrderedDict
 from functools import wraps
-from typing import Optional
 from uuid import uuid4
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from config import ALLOWED_TELEGRAM_IDS
-from openai_utils import parse_request, InterpretacaoIndisponivel
-from setlist_utils import (
-    Show,
+from playlist_manager.config import ALLOWED_TELEGRAM_IDS
+from playlist_manager.integrations.llm import InterpretacaoIndisponivel, parse_request
+from playlist_manager.integrations.setlist_fm import (
+    SHOWS_RECENTES,
+    SetlistIndisponivel,
     average_setlist,
     get_recent_shows,
     get_setlist,
-    SetlistIndisponivel,
-    SHOWS_RECENTES,
 )
-from spotify_utils import create_playlist_with_songs, SpotifyIndisponivel
+from playlist_manager.integrations.spotify import SpotifyIndisponivel, create_playlist_with_songs
+from playlist_manager.models import Show
 
 logger = logging.getLogger("playlist-bot")
 
@@ -62,7 +61,8 @@ def somente_autorizados(handler):
 @somente_autorizados
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 Oi! Qual playlist quer criar? Me fale o nome da banda, a cidade e ano do show que monto pra vc. \n"
+        "🎵 Oi! Qual playlist quer criar? Me fale o nome da banda, a cidade e ano "
+        "do show que monto pra vc. \n"
         "Ex: 'Playlist do Good Charlotte, São Paulo 2025'\n\n"
         "Se não disser cidade nem ano, eu te mostro os últimos shows para escolher — "
         "ou monto a setlist média do artista."
@@ -167,7 +167,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await responder(_mensagem_de_erro(e))
 
 
-def _interpretar(data: str) -> tuple[str, str, Optional[int]]:
+def _interpretar(data: str) -> tuple[str, str, int | None]:
     """Quebra o callback_data em (ação, token, índice). Levanta ValueError se torto."""
     partes = data.split(":")
     if len(partes) == 2 and partes[0] == ESCOLHA_MEDIA:

@@ -1,0 +1,16 @@
+# Dependências diretas do projeto. Este arquivo é a fonte da verdade; o
+# requirements.txt (com as transitivas) é gerado a partir dele:
+#
+#   pip install pip-tools
+#   pip-compile requirements.in
+#
+# As transitivas também ficam pinadas de propósito: pinar só as diretas ainda
+# deixava httpx, starlette e afins flutuarem, que é justamente por onde um
+# redeploy quebra sozinho meses depois.
+fastapi==0.141.1
+uvicorn==0.52.1
+python-telegram-bot==21.4
+spotipy==2.26.0
+requests==2.34.2
+openai==2.53.0
+python-dotenv==1.2.2

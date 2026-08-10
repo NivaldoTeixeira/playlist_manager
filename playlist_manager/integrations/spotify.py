@@ -1,19 +1,20 @@
+"""OAuth do Spotify, busca das faixas e criação da playlist."""
+
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
-from config import (
+from playlist_manager.config import (
+    SCOPES,
+    SPOTIFY_REFRESH_TOKEN,
     SPOTIPY_CLIENT_ID,
     SPOTIPY_CLIENT_SECRET,
     SPOTIPY_REDIRECT_URI,
-    SCOPES,
-    SPOTIFY_REFRESH_TOKEN,
 )
-from setlist_utils import Show, Song
+from playlist_manager.models import Show, Song
 
 logger = logging.getLogger("playlist-bot")
 
@@ -103,7 +104,7 @@ def _e_sistemico(e: BaseException) -> bool:
     return isinstance(status, int) and (status in (401, 403, 429) or status >= 500)
 
 
-def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> Optional[dict]:
+def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> dict | None:
     """A faixa encontrada no Spotify, ou None se as consultas não acharam nada.
 
     Devolve o item cru da API para o chamador aproveitar `popularity` além do id.
@@ -169,8 +170,8 @@ def _ordenar(faixas: list[_Faixa]) -> list[_Faixa]:
 
 # ---------- SPOTIFY: CRIAR PLAYLIST ----------
 def create_playlist_with_songs(
-    show: Show, playlist_name: Optional[str] = None
-) -> tuple[Optional[str], int, list[str]]:
+    show: Show, playlist_name: str | None = None
+) -> tuple[str | None, int, list[str]]:
     """Cria a playlist do show no Spotify.
 
     Devolve (url, quantidade_adicionada, musicas_nao_encontradas). A url é None se
@@ -183,7 +184,7 @@ def create_playlist_with_songs(
     faltando: list[str] = []
     # A mesma música pode aparecer duas vezes (bis, medley). Guardar o resultado
     # evita repetir a busca e evita listá-la duas vezes como não encontrada.
-    resolvidas: dict[tuple[str, str], Optional[dict]] = {}
+    resolvidas: dict[tuple[str, str], dict | None] = {}
     indisponiveis = 0
 
     for song in show.songs:

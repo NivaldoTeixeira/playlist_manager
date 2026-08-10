@@ -21,6 +21,9 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Lint
+        run: ruff check .
+
       - name: Testes
         # Os testes não fazem rede nem usam chave de API: o conftest preenche
         # variáveis falsas antes de qualquer import do projeto.

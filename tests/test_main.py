@@ -7,7 +7,7 @@ O TestClient é usado sem `with`: entrar no contexto dispara o lifespan, que cha
 import pytest
 from fastapi.testclient import TestClient
 
-import main
+from playlist_manager import main
 
 
 @pytest.fixture

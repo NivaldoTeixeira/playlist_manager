@@ -1,9 +1,8 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import RedirectResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -13,10 +12,9 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, missing_config
-from telegram_handlers import cmd_start, handle_escolha, handle_text
-
-from spotify_utils import make_auth_manager
+from playlist_manager.config import TELEGRAM_TOKEN, WEBHOOK_SECRET, missing_config
+from playlist_manager.integrations.spotify import make_auth_manager
+from playlist_manager.telegram_handlers import cmd_start, handle_escolha, handle_text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("playlist-bot")
@@ -65,7 +63,7 @@ def login():
     return RedirectResponse(auth.get_authorize_url())
 
 @app.get("/callback")
-def callback(code: Optional[str] = None, error: Optional[str] = None):
+def callback(code: str | None = None, error: str | None = None):
     if error:
         return PlainTextResponse(f"Erro do Spotify: {error}", status_code=400)
     if not code:
@@ -76,7 +74,9 @@ def callback(code: Optional[str] = None, error: Optional[str] = None):
     refresh = token_info.get("refresh_token")
 
     if not refresh:
-        return PlainTextResponse("Não veio refresh_token. Tente novamente com show_dialog=true.", status_code=400)
+        return PlainTextResponse(
+            "Não veio refresh_token. Tente novamente com show_dialog=true.", status_code=400
+        )
 
     # O valor é mostrado na resposta e não vai para o log: o log do Render fica
     # retido e este token não expira sozinho, então gravá-lo deixaria uma

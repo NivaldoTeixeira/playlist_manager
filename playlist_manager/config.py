@@ -1,6 +1,5 @@
 import logging
 import os
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -22,7 +21,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SCOPES = "playlist-modify-public playlist-modify-private"
 
 
-def _ids_permitidos(bruto: Optional[str]) -> frozenset[int]:
+def _ids_permitidos(bruto: str | None) -> frozenset[int]:
     """Lê ALLOWED_TELEGRAM_IDS, ignorando entradas que não são número.
 
     Entrada torta vira aviso no log em vez de derrubar o boot: um caractere a

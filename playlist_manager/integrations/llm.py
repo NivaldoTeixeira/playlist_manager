@@ -1,7 +1,11 @@
+"""Extração de artista/cidade/ano do pedido em linguagem natural, via LLM."""
+
 import json
 import logging
+
 from openai import OpenAI
-from config import OPENAI_API_KEY
+
+from playlist_manager.config import OPENAI_API_KEY
 
 logger = logging.getLogger("playlist-bot")
 
@@ -31,19 +35,23 @@ def parse_request(text: str):
     Retorna uma tupla (artist, city, year), podendo ser None se não for identificado.
     """
     prompt = f"""
-        Contexto: você é um assistente que extrai informações de texto; 
-        Seu uso é para ajudar a criar playlists no spotify a partir de setlists de shows. 
-        O usuário fornece uma mensagem com informações sobre o artista, cidade e ano do show (cidade e ano sendo opcionais). 
-        
-        Tarefa: Interprete e extraia do texto a seguir, enviado pelo, os campos JSON: artist, city, year (YYYY).
-        Se não houver city ou year, retorne null. Não invente.
-        Se não encontrar o nome da banda exato, veja se não é um apelido, abreviação comum ou erro de digitação ou possível correção automática do celular. 
-        Se a chance de ser um erro for alta, tente corrigir.
-        
-        Formato de resposta: Retorne apenas um JSON puro, artist, city, year (YYYY), sem nenhum outro texto ou markdown.
-        
-        Texto: "{text}"
-        """
+Contexto: você é um assistente que extrai informações de texto;
+Seu uso é para ajudar a criar playlists no spotify a partir de setlists de shows.
+O usuário fornece uma mensagem com informações sobre o artista, cidade e ano do
+show (cidade e ano sendo opcionais).
+
+Tarefa: Interprete e extraia do texto a seguir, enviado pelo, os campos JSON:
+artist, city, year (YYYY).
+Se não houver city ou year, retorne null. Não invente.
+Se não encontrar o nome da banda exato, veja se não é um apelido, abreviação
+comum ou erro de digitação ou possível correção automática do celular.
+Se a chance de ser um erro for alta, tente corrigir.
+
+Formato de resposta: Retorne apenas um JSON puro, artist, city, year (YYYY),
+sem nenhum outro texto ou markdown.
+
+Texto: "{text}"
+"""
     # Falhas de infraestrutura (chave ausente, rate limit, API fora) sobem para o
     # handler, que avisa o que houve. Engoli-las aqui faria todo pedido responder
     # "não entendi o artista", escondendo a causa real.

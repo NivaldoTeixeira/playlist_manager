@@ -4,10 +4,11 @@ import types
 
 import pytest
 
-import telegram_handlers as th
-from openai_utils import InterpretacaoIndisponivel
-from setlist_utils import Show, Song, SetlistIndisponivel
-from spotify_utils import SpotifyIndisponivel
+import playlist_manager.telegram_handlers as th
+from playlist_manager.integrations.llm import InterpretacaoIndisponivel
+from playlist_manager.integrations.setlist_fm import SetlistIndisponivel
+from playlist_manager.integrations.spotify import SpotifyIndisponivel
+from playlist_manager.models import Show, Song
 
 
 class FakeMessage:

@@ -2,7 +2,7 @@ import types
 
 import pytest
 
-import openai_utils as ou
+import playlist_manager.integrations.llm as ou
 
 
 def resposta(texto):
