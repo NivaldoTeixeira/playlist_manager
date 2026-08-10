@@ -14,8 +14,15 @@ Telegram ──POST /webhook/<segredo>──▶ FastAPI (playlist_manager/main.p
                                           ▼
                               update_queue do python-telegram-bot
                                           │
+                    ┌─────────────────────┴─────────────────────┐
+                    ▼                                           ▼
+             handle_text                                 handle_escolha
+        "Playlist do Iron Maiden"                    clique num botão do menu
+                    │                                           │
+                    └─────────────────────┬─────────────────────┘
                                           ▼
-                              telegram_handlers.handle_text
+                                       service
+                          orquestra o pedido, sem falar Telegram
                                           │
               ┌───────────────────────────┼───────────────────────────┐
               ▼                           ▼                           ▼
@@ -31,16 +38,23 @@ a resposta atrasasse, o Telegram reenviaria o mesmo update e criaria playlist du
 | Arquivo | Responsabilidade |
 |---|---|
 | `playlist_manager/main.py` | App FastAPI, rotas e ciclo de vida do bot |
-| `playlist_manager/config.py` | Leitura das variáveis de ambiente |
+| `playlist_manager/telegram_handlers.py` | Transporte: mensagem → pedido, resultado → texto |
+| `playlist_manager/service.py` | A regra do pedido, sem saber que existe Telegram |
 | `playlist_manager/models.py` | `Show` e `Song`, o vocabulário comum |
-| `playlist_manager/telegram_handlers.py` | Comandos e mensagens do Telegram |
+| `playlist_manager/messages.py` | Tudo que o bot fala |
+| `playlist_manager/errors.py` | As falhas de serviço externo e a mensagem de cada uma |
+| `playlist_manager/config.py` | Leitura das variáveis de ambiente |
 | `playlist_manager/integrations/llm.py` | Extração de artista/cidade/ano via LLM |
 | `playlist_manager/integrations/setlist_fm.py` | Consulta à API da setlist.fm |
 | `playlist_manager/integrations/spotify.py` | OAuth do Spotify e criação da playlist |
 
-A dependência aponta sempre para dentro: `integrations` não conhece o Telegram, e
-`models` não conhece ninguém. Trocar a setlist.fm por outra fonte, por exemplo, é
-mexer em um arquivo só.
+A dependência aponta sempre para dentro: `integrations` não conhece o Telegram, `service`
+não sabe que a resposta vira mensagem de chat, e `models` não conhece ninguém. Trocar a
+setlist.fm por outra fonte, por exemplo, é mexer em um arquivo só.
+
+`service.py` também é o único lugar que joga trabalho em thread. As três bibliotecas de
+integração são síncronas e um pedido leva dezenas de segundos; chamá-las direto do
+handler travaria o event loop, segurando o `/health` e os webhooks seguintes.
 
 ### Como o show é escolhido
 
@@ -110,7 +124,7 @@ encontradas são listadas na resposta em vez de sumirem caladas.
 
 ## Variáveis de ambiente
 
-Todas as da tabela são obrigatórias — a exceção é `ALLOWED_TELEGRAM_IDS`, logo abaixo.
+Todas as da tabela são obrigatórias. As opcionais estão logo abaixo dela.
 Veja [`.env.example`](.env.example) para o formato.
 
 | Variável | Onde conseguir |
@@ -122,6 +136,13 @@ Veja [`.env.example`](.env.example) para o formato.
 | `SPOTIFY_REFRESH_TOKEN` | Gerado uma única vez pelo fluxo `/login` (veja abaixo) |
 | `SETLIST_KEY` | [API da setlist.fm](https://www.setlist.fm/settings/api) |
 | `OPENAI_API_KEY` | [OpenAI Platform](https://platform.openai.com/api-keys) |
+
+Duas são opcionais e não entram no `/health`:
+
+| Variável | Para quê | Padrão |
+|---|---|---|
+| `ALLOWED_TELEGRAM_IDS` | Quem pode usar o bot (veja abaixo) | vazio: aberto a qualquer um |
+| `OPENAI_MODEL` | Modelo que interpreta o pedido | `gpt-4o-mini` |
 
 ### Quem pode usar o bot
 
@@ -173,6 +194,8 @@ essa URL. Sem isso, dá para testar as rotas HTTP normalmente:
 ```bash
 curl localhost:8000/health
 ```
+
+A documentação interativa das rotas fica em `localhost:8000/docs`.
 
 ## Deploy no Render
 
@@ -241,11 +264,31 @@ curl "https://api.telegram.org/bot$TELEGRAM_TOKEN/getWebhookInfo"
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
 pytest
+ruff check .
 ```
 
 Rodam sem chaves de API e sem rede — todas as integrações são substituídas. Cobrem
-seleção do show, covers, cascata de busca no Spotify, deduplicação, mensagens do bot
-e as rotas HTTP.
+seleção do show, covers, cascata de busca no Spotify, deduplicação, allowlist,
+mensagens do bot e as rotas HTTP. O [CI](.github/workflows/ci.yml) roda os dois a cada
+push, na versão do Python fixada em [`.python-version`](.python-version).
+
+Os dublês entram em `service`, não nas integrações: assim um teste de handler passa
+pela regra do pedido de verdade, e só a chamada externa é substituída.
+
+### Mexendo nas dependências
+
+`requirements.in` e `requirements-dev.in` são a fonte da verdade; os `.txt` são
+gerados e não se editam à mão:
+
+```bash
+pip install pip-tools
+pip-compile requirements.in          # regrava requirements.txt
+pip-compile requirements-dev.in      # regrava requirements-dev.txt
+```
+
+As transitivas ficam pinadas junto com as diretas de propósito: pinar só as diretas
+ainda deixava `httpx`, `starlette` e afins flutuarem, que é por onde um redeploy
+quebra sozinho meses depois.
 
 ## Quando alguma coisa para de funcionar
 
@@ -303,3 +346,4 @@ Painel do Render → serviço → **Logs**. As mensagens úteis:
 | `GET /login` | Redireciona para a autorização do Spotify |
 | `GET /callback` | Recebe o retorno do Spotify e exibe o refresh token |
 | `POST /webhook/{segredo}` | Recebe updates do Telegram |
+| `GET /docs` | Documentação interativa, gerada pelo FastAPI a partir das rotas |

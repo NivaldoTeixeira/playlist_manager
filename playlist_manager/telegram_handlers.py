@@ -8,10 +8,11 @@ uma interface web.
 
 import logging
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from functools import wraps
 from uuid import uuid4
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from playlist_manager import messages, service
@@ -20,6 +21,13 @@ from playlist_manager.errors import mensagem_de
 from playlist_manager.models import Show
 
 logger = logging.getLogger("playlist-bot")
+
+# Quem manda texto para o chat. Muda conforme a origem: numa mensagem é o
+# reply_text dela; num clique de botão é o envio pelo chat, porque a mensagem do
+# botão pode estar inacessível.
+Responder = Callable[[str], Awaitable[None]]
+
+Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
 
 # Prefixos do callback_data dos botões (o Telegram limita a 64 bytes).
 ESCOLHA_SHOW = "show"
@@ -31,7 +39,7 @@ ESCOLHA_MEDIA = "media"
 MENUS_GUARDADOS = 5
 
 
-def somente_autorizados(handler):
+def somente_autorizados(handler: Handler) -> Handler:
     """Barra quem não está em ALLOWED_TELEGRAM_IDS, quando a lista está preenchida.
 
     A playlist é criada sempre na conta do Spotify de quem gerou o
@@ -96,7 +104,7 @@ def _interpretar(data: str) -> tuple[str, str, int | None]:
     raise ValueError(data)
 
 
-async def _remover_teclado(query) -> None:
+async def _remover_teclado(query: CallbackQuery) -> None:
     """Tira os botões da mensagem; falha aqui não pode atrapalhar o pedido."""
     try:
         await query.edit_message_reply_markup(reply_markup=None)
@@ -104,7 +112,7 @@ async def _remover_teclado(query) -> None:
         logger.debug("Não consegui remover o teclado: %s", e)
 
 
-async def _criar_e_responder(responder, show: Show, nome: str) -> None:
+async def _criar_e_responder(responder: Responder, show: Show, nome: str) -> None:
     """Monta a playlist e responde com o link e o que ficou de fora."""
     await responder(messages.criando_playlist(nome))
 
@@ -164,7 +172,7 @@ async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # então a resposta sai pelo chat, não pela mensagem.
     chat = update.effective_chat
 
-    async def responder(texto):
+    async def responder(texto: str) -> None:
         await context.bot.send_message(chat_id=chat.id, text=texto)
 
     try:

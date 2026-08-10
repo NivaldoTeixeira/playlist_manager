@@ -126,7 +126,7 @@ def average_setlist(shows: list[Show], min_frequency: float = FREQUENCIA_MINIMA)
     shows, da mais recorrente para a menos.
 
     A ordem aqui é informativa; quem define a ordem da playlist é `_ordenar()`,
-    em spotify_utils, que não segue o roteiro do show de propósito.
+    em integrations/spotify.py, que não segue o roteiro do show de propósito.
     """
     if not shows:
         return []
