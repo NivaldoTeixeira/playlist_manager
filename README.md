@@ -105,7 +105,8 @@ encontradas são listadas na resposta em vez de sumirem caladas.
 
 ## Variáveis de ambiente
 
-Todas são obrigatórias. Veja [`.env.example`](.env.example) para o formato.
+Todas as da tabela são obrigatórias — a exceção é `ALLOWED_TELEGRAM_IDS`, logo abaixo.
+Veja [`.env.example`](.env.example) para o formato.
 
 | Variável | Onde conseguir |
 |---|---|
@@ -116,6 +117,25 @@ Todas são obrigatórias. Veja [`.env.example`](.env.example) para o formato.
 | `SPOTIFY_REFRESH_TOKEN` | Gerado uma única vez pelo fluxo `/login` (veja abaixo) |
 | `SETLIST_KEY` | [API da setlist.fm](https://www.setlist.fm/settings/api) |
 | `OPENAI_API_KEY` | [OpenAI Platform](https://platform.openai.com/api-keys) |
+
+### Quem pode usar o bot
+
+> ⚠️ **A playlist nasce sempre na conta do Spotify de quem gerou o
+> `SPOTIFY_REFRESH_TOKEN` — não na de quem pediu.** O bot tem uma credencial só, a sua.
+> Quem conversar com ele está escrevendo na sua biblioteca.
+
+Por isso existe o `ALLOWED_TELEGRAM_IDS` (opcional): lista de ids do Telegram separados
+por vírgula que podem usar o bot. Qualquer outro recebe *"Esse bot é privado"* e o
+pedido nem chega às integrações.
+
+```
+ALLOWED_TELEGRAM_IDS=12345678,87654321
+```
+
+Descubra seu id conversando com o [@userinfobot](https://t.me/userinfobot). **Vazio ou
+ausente deixa o bot aberto a qualquer um**, que é o comportamento histórico — se o seu
+bot é público no Telegram, preencha. Entrada que não é número é ignorada com um aviso
+no log (`ALLOWED_TELEGRAM_IDS: ignorando ...`) em vez de derrubar o serviço.
 
 O serviço **sobe mesmo com variáveis faltando** — ele só registra um aviso no log.
 Para conferir o que está faltando, chame `GET /health`:

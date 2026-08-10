@@ -1,12 +1,14 @@
 import asyncio
 import logging
 from collections import OrderedDict
+from functools import wraps
 from typing import Optional
 from uuid import uuid4
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from config import ALLOWED_TELEGRAM_IDS
 from openai_utils import parse_request, InterpretacaoIndisponivel
 from setlist_utils import (
     Show,
@@ -30,6 +32,34 @@ ESCOLHA_MEDIA = "media"
 MENUS_GUARDADOS = 5
 
 
+def somente_autorizados(handler):
+    """Barra quem não está em ALLOWED_TELEGRAM_IDS, quando a lista está preenchida.
+
+    A playlist é criada sempre na conta do Spotify de quem gerou o
+    SPOTIFY_REFRESH_TOKEN. Sem esta trava, qualquer pessoa que descobrisse o bot
+    escreveria na biblioteca do dono. Lista vazia mantém o bot aberto.
+    """
+    @wraps(handler)
+    async def _guarda(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # Lista vazia nem consulta o update: o bot aberto não paga nada por isso.
+        if ALLOWED_TELEGRAM_IDS:
+            user = update.effective_user
+            if user is None or user.id not in ALLOWED_TELEGRAM_IDS:
+                logger.warning("Pedido recusado: usuário %s fora da allowlist.",
+                               getattr(user, "id", None))
+                chat = update.effective_chat
+                if chat is not None:
+                    await context.bot.send_message(
+                        chat_id=chat.id,
+                        text="Esse bot é privado 🙃 Fala com o dono se quiser acesso.",
+                    )
+                return
+        return await handler(update, context)
+
+    return _guarda
+
+
+@somente_autorizados
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎵 Oi! Qual playlist quer criar? Me fale o nome da banda, a cidade e ano do show que monto pra vc. \n"
@@ -94,6 +124,7 @@ async def _criar_e_responder(responder, show: Show, nome: str):
     await responder(resposta)
 
 
+@somente_autorizados
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     responder = update.message.reply_text
@@ -146,6 +177,7 @@ def _interpretar(data: str) -> tuple[str, str, Optional[int]]:
     raise ValueError(data)
 
 
+@somente_autorizados
 async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()  # tira o "carregando" do botão
