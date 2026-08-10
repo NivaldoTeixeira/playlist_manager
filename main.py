@@ -5,10 +5,16 @@ from typing import Optional
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import RedirectResponse, PlainTextResponse
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, missing_config
-from telegram_handlers import cmd_start, handle_text
+from telegram_handlers import cmd_start, handle_escolha, handle_text
 
 from spotify_utils import make_auth_manager
 
@@ -20,6 +26,7 @@ tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
 tg_app.add_handler(CommandHandler("start", cmd_start))
 tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+tg_app.add_handler(CallbackQueryHandler(handle_escolha))
 
 
 @asynccontextmanager

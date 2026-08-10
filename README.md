@@ -41,8 +41,32 @@ a resposta atrasasse, o Telegram reenviaria o mesmo update e criaria playlist du
 
 A busca na setlist.fm devolve vários shows, e é comum os primeiros virem **sem
 músicas registradas** (show cancelado, ou que ninguém cadastrou ainda). O bot
-percorre os resultados e usa o primeiro que de fato tenha setlist, dizendo na
-resposta qual show pegou (`Achei: Espaço Unimed - São Paulo, 31/08/2025`).
+descarta esses e trabalha só com os que têm setlist de verdade.
+
+O que acontece depois depende do pedido:
+
+- **Pedido específico** (`Playlist do Iron Maiden, São Paulo 2024`) — usa direto o
+  show mais relevante e já monta a playlist.
+- **Pedido aberto** (`Playlist do Iron Maiden`) — responde com os **10 shows mais
+  recentes** em botões, e o usuário escolhe um deles ou a **setlist média**.
+
+### A setlist média
+
+O site da setlist.fm mostra a "average setlist" de um artista, mas **a API 1.0 não
+expõe isso** — só busca de setlists, artistas, cidades e venues. Então o cálculo é
+feito aqui, em `average_setlist()`, sobre os mesmos 10 shows já baixados:
+
+- entram as músicas presentes em pelo menos **metade** dos shows (`FREQUENCIA_MINIMA`);
+- a ordem segue a **posição média relativa** de cada música, então abertura fica no
+  começo e bis no fim mesmo com shows de tamanhos diferentes;
+- a comparação ignora maiúsculas, e cover mantém o artista original para a busca.
+
+Se os shows não tiverem repertório em comum suficiente, o bot avisa e sugere escolher
+um show específico, em vez de devolver playlist vazia.
+
+> A lista de shows fica em `context.user_data`, que vive em memória. Se o serviço
+> reiniciar entre a pergunta e o clique — comum no plano gratuito do Render — o bot
+> responde que a lista expirou e pede o pedido de novo.
 
 ### Como as faixas são encontradas
 

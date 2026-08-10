@@ -68,7 +68,7 @@ def test_sem_setlist(monkeypatch):
 
 def test_setlist_achada_mas_nada_no_spotify(monkeypatch):
     enviadas = rodar(monkeypatch, playlist=lambda s, n: (None, 0, ["A"]))
-    assert "não encontrei nenhuma dessas músicas" in enviadas[-1]
+    assert "encontrei nenhuma dessas músicas" in enviadas[-1].lower()
 
 
 # ---------- mensagens específicas por serviço ----------

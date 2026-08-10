@@ -1,5 +1,8 @@
 import logging
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from math import ceil
+from statistics import mean
 from typing import Optional
 
 import requests
@@ -9,6 +12,13 @@ from config import SETLIST_KEY
 logger = logging.getLogger("playlist-bot")
 
 API_URL = "https://api.setlist.fm/rest/1.0/search/setlists"
+
+# Quantos shows recentes oferecer quando o pedido não diz cidade nem ano.
+SHOWS_RECENTES = 10
+
+# Fração dos shows em que a música precisa aparecer para entrar na setlist média.
+# Abaixo disso a média vira uma lista inchada de raridades de uma noite só.
+FREQUENCIA_MINIMA = 0.5
 
 
 class SetlistIndisponivel(RuntimeError):
@@ -72,12 +82,18 @@ def _parse_show(setlist: dict) -> Show:
     )
 
 
-def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = None) -> Optional[Show]:
-    """Busca na setlist.fm o show mais recente que tenha músicas registradas.
+def get_recent_shows(
+    artist: str,
+    city: Optional[str] = None,
+    year: Optional[str] = None,
+    limit: int = SHOWS_RECENTES,
+) -> list[Show]:
+    """Shows recentes do artista que tenham músicas registradas, mais novo primeiro.
 
-    Devolve None quando a busca rodou e não há resultado aproveitável. Levanta
-    SetlistIndisponivel quando a API falhou — são coisas diferentes: mandar o
-    usuário tentar outro nome com a setlist.fm fora só rende tentativa inútil.
+    Devolve lista vazia quando a busca rodou e não há resultado aproveitável.
+    Levanta SetlistIndisponivel quando a API falhou — são coisas diferentes:
+    mandar o usuário tentar outro nome com a setlist.fm fora só rende tentativa
+    inútil.
     """
     headers = {"x-api-key": SETLIST_KEY, "Accept": "application/json"}
     params = {"artistName": artist, "p": 1}
@@ -95,25 +111,65 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
     if r.status_code == 404:
         # A setlist.fm responde 404 quando a busca não casa com nada.
         logger.info("Nenhum show encontrado para %s (city=%s, year=%s)", artist, city, year)
-        return None
+        return []
     if r.status_code != 200:
         logger.error("Setlist.fm erro %s: %s", r.status_code, r.text[:200])
         raise SetlistIndisponivel(f"setlist.fm respondeu {r.status_code}")
 
     resultados = r.json().get("setlist", [])
     if not resultados:
-        return None
+        return []
 
-    # Percorre os resultados em vez de olhar só o primeiro: show cancelado ou sem
-    # setlist registrada é comum e vem no topo, o que fazia o bot responder
+    # Filtra os que não têm músicas em vez de olhar só o primeiro: show cancelado
+    # ou sem setlist registrada é comum e vem no topo, o que fazia o bot responder
     # "não achei nenhuma setlist" mesmo havendo shows bons logo abaixo.
-    for posicao, setlist in enumerate(resultados):
-        show = _parse_show(setlist)
-        if show.songs:
-            if posicao:
-                logger.info("Pulei %d show(s) sem músicas registradas.", posicao)
-            logger.info("Usando setlist de %s (%d músicas).", show.describe(), len(show.songs))
-            return show
+    shows = [s for s in map(_parse_show, resultados) if s.songs]
+    ignorados = len(resultados) - len(shows)
+    if ignorados:
+        logger.info("Ignorei %d show(s) sem músicas registradas.", ignorados)
 
-    logger.info("Achei %d show(s) de %s, nenhum com músicas registradas.", len(resultados), artist)
-    return None
+    return shows[:limit]
+
+
+def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = None) -> Optional[Show]:
+    """O show recente mais relevante, ou None se não houver nenhum aproveitável."""
+    shows = get_recent_shows(artist, city, year, limit=1)
+    if not shows:
+        return None
+    logger.info("Usando setlist de %s (%d músicas).", shows[0].describe(), len(shows[0].songs))
+    return shows[0]
+
+
+def average_setlist(shows: list[Show], min_frequency: float = FREQUENCIA_MINIMA) -> list[Song]:
+    """Repertório típico do artista a partir dos shows dados.
+
+    A setlist.fm calcula isso no site, mas não expõe na API 1.0 — então a conta é
+    feita aqui: entram as músicas presentes em pelo menos `min_frequency` dos
+    shows, ordenadas pela posição média que ocupam.
+    """
+    if not shows:
+        return []
+
+    contagem: Counter = Counter()
+    posicoes: dict[str, list[float]] = defaultdict(list)
+    exemplar: dict[str, Song] = {}
+
+    for show in shows:
+        ultimo = max(len(show.songs) - 1, 1)
+        for i, song in enumerate(show.songs):
+            chave = song.name.casefold()
+            contagem[chave] += 1
+            # Posição relativa (0 = abertura, 1 = encerramento) para comparar
+            # shows de tamanhos diferentes.
+            posicoes[chave].append(i / ultimo)
+            exemplar.setdefault(chave, song)
+
+    minimo = max(1, ceil(len(shows) * min_frequency))
+    frequentes = [chave for chave, n in contagem.items() if n >= minimo]
+    frequentes.sort(key=lambda chave: mean(posicoes[chave]))
+
+    logger.info(
+        "Setlist média de %d shows: %d músicas (mínimo de %d aparições).",
+        len(shows), len(frequentes), minimo,
+    )
+    return [exemplar[chave] for chave in frequentes]

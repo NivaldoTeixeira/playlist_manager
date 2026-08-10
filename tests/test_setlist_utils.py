@@ -122,3 +122,82 @@ def test_filtros_viram_parametros(monkeypatch):
     assert capturado["artistName"] == "Good Charlotte"
     assert capturado["cityName"] == "São Paulo"
     assert capturado["year"] == "2025"
+
+
+# ---------- shows recentes ----------
+def test_get_recent_shows_filtra_e_limita(responder):
+    responder({"setlist": [
+        setlist([]),                                   # sem músicas: fora
+        setlist([{"name": "A"}], data="01-01-2025"),
+        setlist([]),                                   # sem músicas: fora
+        setlist([{"name": "B"}], data="02-01-2025"),
+        setlist([{"name": "C"}], data="03-01-2025"),
+    ]})
+    shows = su.get_recent_shows("X", limit=2)
+    assert len(shows) == 2
+    assert [s.date for s in shows] == ["01/01/2025", "02/01/2025"]
+
+
+def test_get_recent_shows_vazio(responder):
+    responder({"setlist": [setlist([]), setlist([])]})
+    assert su.get_recent_shows("X") == []
+
+
+def test_get_setlist_delega_para_o_primeiro(responder):
+    responder({"setlist": [setlist([]), setlist([{"name": "A"}])]})
+    show = su.get_setlist("X")
+    assert [s.name for s in show.songs] == ["A"]
+
+
+# ---------- setlist média ----------
+def show_com(nomes, artista="GC"):
+    return su.Show(artist=artista, songs=[su.Song(n, artista) for n in nomes])
+
+
+def test_media_mantem_so_o_que_se_repete():
+    """A setlist.fm calcula isso no site; a API 1.0 não expõe, então é conta nossa."""
+    shows = [
+        show_com(["A", "B", "raridade1"]),
+        show_com(["A", "B", "raridade2"]),
+        show_com(["A", "B", "raridade3"]),
+        show_com(["A", "B", "raridade4"]),
+    ]
+    assert [s.name for s in su.average_setlist(shows)] == ["A", "B"]
+
+
+def test_media_respeita_a_ordem_tipica():
+    """Abertura no começo e bis no fim, mesmo com shows de tamanhos diferentes."""
+    shows = [
+        show_com(["abertura", "meio", "bis"]),
+        show_com(["abertura", "meio1", "meio2", "meio3", "bis"]),
+    ]
+    resultado = [s.name for s in su.average_setlist(shows)]
+    assert resultado[0] == "abertura"
+    assert resultado[-1] == "bis"
+
+
+def test_media_agrupa_ignorando_caixa():
+    shows = [show_com(["The Anthem"]), show_com(["the anthem"])]
+    assert len(su.average_setlist(shows)) == 1
+
+
+def test_media_de_um_show_e_o_proprio_show():
+    assert [s.name for s in su.average_setlist([show_com(["A", "B"])])] == ["A", "B"]
+
+
+def test_media_sem_shows():
+    assert su.average_setlist([]) == []
+
+
+def test_media_sem_repertorio_comum():
+    """Shows sem nada em comum não rendem média — o bot precisa avisar."""
+    shows = [show_com(["A"]), show_com(["B"]), show_com(["C"]), show_com(["D"])]
+    assert su.average_setlist(shows) == []
+
+
+def test_media_preserva_artista_de_cover():
+    shows = [
+        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "The Beatles")]),
+        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "The Beatles")]),
+    ]
+    assert su.average_setlist(shows)[0].search_artist == "The Beatles"
