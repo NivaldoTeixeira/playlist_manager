@@ -1,7 +1,7 @@
-fastapi
-uvicorn
+fastapi==0.141.1
+uvicorn==0.52.1
 python-telegram-bot==21.4
-spotipy
-requests
-openai>=1.30.0
-python-dotenv
+spotipy==2.26.0
+requests==2.34.2
+openai==2.53.0
+python-dotenv==1.2.2

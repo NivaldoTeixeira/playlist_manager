@@ -4,7 +4,20 @@ from openai import OpenAI
 from config import OPENAI_API_KEY
 
 logger = logging.getLogger("playlist-bot")
-oa_client = OpenAI(api_key=OPENAI_API_KEY)
+
+_oa_client = None
+
+
+def get_openai_client() -> OpenAI:
+    """Cria o client sob demanda.
+
+    Instanciar no import faria o app inteiro morrer no boot quando OPENAI_API_KEY
+    não estivesse configurada, em vez de subir e reportar o problema em /health.
+    """
+    global _oa_client
+    if _oa_client is None:
+        _oa_client = OpenAI(api_key=OPENAI_API_KEY)
+    return _oa_client
 
 # ---------- OPENAI: PARSING NATURAL ----------
 def parse_request(text: str):
@@ -28,7 +41,7 @@ def parse_request(text: str):
         
         Texto: "{text}"
         """
-        resp = oa_client.chat.completions.create(
+        resp = get_openai_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0
