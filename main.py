@@ -1,13 +1,13 @@
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
-import requests
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import RedirectResponse, PlainTextResponse
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-from config import TELEGRAM_TOKEN, WEBHOOK_SECRET
+from config import TELEGRAM_TOKEN, WEBHOOK_SECRET, missing_config
 from telegram_handlers import cmd_start, handle_text
 
 from spotify_utils import make_auth_manager
@@ -15,19 +15,42 @@ from spotify_utils import make_auth_manager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("playlist-bot")
 
-# --- FastAPI app ---
-app = FastAPI(title="Playlist Manager Bot")
-
 # --- Telegram app (webhook mode) ---
 tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
 tg_app.add_handler(CommandHandler("start", cmd_start))
 tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    faltando = missing_config()
+    if faltando:
+        # Aviso, não erro: o serviço sobe mesmo assim e /health mostra o que falta.
+        logger.warning("Variáveis de ambiente ausentes: %s", ", ".join(faltando))
+
+    await tg_app.initialize()
+    # start() liga o consumidor da update_queue, que processa os updates em
+    # segundo plano — o webhook só enfileira e responde na hora.
+    await tg_app.start()
+    logger.info("Bot inicializado.")
+    try:
+        yield
+    finally:
+        await tg_app.stop()
+        await tg_app.shutdown()
+        logger.info("Bot encerrado.")
+
+
+# --- FastAPI app ---
+app = FastAPI(title="Playlist Manager Bot", lifespan=lifespan)
+
+
 # ---------- FASTAPI ROUTES ----------
 @app.get("/health")
 def health():
-    return {"ok": True}
+    faltando = missing_config()
+    return {"ok": not faltando, "missing_config": faltando}
 
 @app.get("/login")
 def login():
@@ -61,15 +84,13 @@ async def telegram_webhook(token: str, request: Request):
         raise HTTPException(status_code=403, detail="forbidden")
     data = await request.json()
     logger.info("Recebido update do Telegram: %s", data)
+
     update = Update.de_json(data, tg_app.bot)
-    await tg_app.process_update(update)
+    if update is None:
+        logger.warning("Update do Telegram não reconhecido, ignorando.")
+        return PlainTextResponse("ok")
+
+    # Enfileira e responde imediatamente: criar a playlist leva mais tempo que o
+    # timeout do Telegram, e demorar aqui faria ele reenviar o mesmo update.
+    await tg_app.update_queue.put(update)
     return PlainTextResponse("ok")
-
-# Inicializa/encerra o app do Telegram junto com a FastAPI
-@app.on_event("startup")
-async def on_startup():
-    await tg_app.initialize()
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    await tg_app.shutdown()
