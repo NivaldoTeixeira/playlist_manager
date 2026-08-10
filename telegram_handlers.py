@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -17,22 +18,28 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     await update.message.reply_text("Deixa eu ver o que eu acho... 🔎")
     try:
-        artist, city, year = parse_request(text)
+        # openai, requests e spotipy são síncronos e um pedido leva dezenas de
+        # segundos (uma busca no Spotify por música). Chamá-los direto travaria o
+        # event loop, segurando o /health e os webhooks seguintes — justamente o
+        # timeout do Telegram que a fila de updates existe para evitar.
+        artist, city, year = await asyncio.to_thread(parse_request, text)
         if not artist:
             await update.message.reply_text("Não entendi o artista... Confere o nome e tenta de novo, pfvr?")
             return
 
-        songs = get_setlist(artist, city, year)
+        songs = await asyncio.to_thread(get_setlist, artist, city, year)
         if not songs:
             await update.message.reply_text("Não achei nenhuma setlist 😬")
             return
 
         await update.message.reply_text("Booa, criando sua playlist no Spotify...")
-        url = create_playlist_with_songs(artist, songs, playlist_name=f"Setlist {artist} {city or ''} {year or ''}".strip())
+        nome = f"Setlist {artist} {city or ''} {year or ''}".strip()
+        url = await asyncio.to_thread(create_playlist_with_songs, artist, songs, nome)
         if url:
             await update.message.reply_text(f"Tá na mão: {url}")
         else:
             await update.message.reply_text("Deu algum problema criando a playlist... Sorry 😬")
-    except Exception as e:
-        logger.exception("Erro handle_text: %s", e)
-        await update.message.reply_text(f"Deu erro... o que é isso? {e}")
+    except Exception:
+        # Detalhe da exceção fica no log; o usuário não precisa (nem deve) ver o texto cru.
+        logger.exception("Erro ao processar pedido: %r", text)
+        await update.message.reply_text("Deu erro aqui do meu lado... tenta de novo daqui a pouco? 😬")

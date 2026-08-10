@@ -97,10 +97,23 @@ web: uvicorn main:app --host 0.0.0.0 --port $PORT
 4. Confirme a versão do Python em **Settings → Environment**, variável `PYTHON_VERSION`
    (o projeto é desenvolvido e testado no **3.11**)
 
-As dependências estão **fixadas em versões exatas** no `requirements.txt`. Isso é
-proposital: sem pin, um redeploy meses depois puxa versões novas e pode quebrar o
-serviço sem nenhuma mudança de código. Ao atualizar uma lib, faça isso de forma
-deliberada e teste antes.
+As dependências estão **fixadas em versões exatas**, diretas e transitivas, no
+`requirements.txt`. Isso é proposital: sem pin, um redeploy meses depois puxa versões
+novas e pode quebrar o serviço sem nenhuma mudança de código. Ao atualizar uma lib,
+faça isso de forma deliberada e teste antes.
+
+### Limitações conhecidas do ciclo de vida
+
+Dois comportamentos que valem conhecer antes de investigar um incidente:
+
+- **O startup depende da API do Telegram.** `Application.initialize()` faz uma chamada
+  `getMe`, então token revogado ou instabilidade do Telegram aborta o boot e o
+  `/health` não chega a responder. Um serviço que não sobe e cujo `/health` não
+  responde aponta para o Telegram, não para as outras integrações.
+- **Entrega é at-most-once.** O webhook confirma o update antes de processá-lo, o que
+  elimina a duplicação por timeout. O preço é o oposto: se o serviço reiniciar com um
+  pedido em andamento, ele se perde e o Telegram não reenvia — o usuário precisa pedir
+  de novo. Trocar isso por at-least-once exigiria fila persistente.
 
 ### Gerando o `SPOTIFY_REFRESH_TOKEN`
 
