@@ -15,6 +15,10 @@ logger = logging.getLogger("playlist-bot")
 
 API_URL = "https://api.setlist.fm/rest/1.0/search/setlists"
 
+# Segundos até desistir da chamada. Sem limite, uma resposta que nunca chega
+# seguraria a thread e o pedido inteiro ficaria pendurado.
+TIMEOUT = 20
+
 # Quantos shows recentes oferecer quando o pedido não diz cidade nem ano.
 SHOWS_RECENTES = 10
 
@@ -77,7 +81,7 @@ def get_recent_shows(
         params["year"] = year
 
     try:
-        r = requests.get(API_URL, headers=headers, params=params, timeout=20)
+        r = requests.get(API_URL, headers=headers, params=params, timeout=TIMEOUT)
     except requests.RequestException as e:
         logger.warning("Não consegui falar com a setlist.fm: %s", e)
         raise SetlistIndisponivel(str(e)) from e

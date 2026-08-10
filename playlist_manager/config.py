@@ -1,3 +1,11 @@
+"""Leitura das variáveis de ambiente, num lugar só.
+
+Os valores são lidos no import e ficam como constantes de módulo — é o que
+permite `from playlist_manager.config import SETLIST_KEY` nas integrações. A
+exceção é `missing_config()`, que consulta o ambiente na hora da chamada: ela
+serve ao `/health`, que precisa dizer o estado atual e não o do boot.
+"""
+
 import logging
 import os
 
@@ -45,18 +53,21 @@ def _ids_permitidos(bruto: str | None) -> frozenset[int]:
 ALLOWED_TELEGRAM_IDS = _ids_permitidos(os.getenv("ALLOWED_TELEGRAM_IDS"))
 
 # Variáveis sem as quais o bot não consegue atender um pedido de ponta a ponta.
-_REQUIRED = {
-    "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
-    "TELEGRAM_WEBHOOK_SECRET": WEBHOOK_SECRET,
-    "SPOTIPY_CLIENT_ID": SPOTIPY_CLIENT_ID,
-    "SPOTIPY_CLIENT_SECRET": SPOTIPY_CLIENT_SECRET,
-    "SPOTIPY_REDIRECT_URI": SPOTIPY_REDIRECT_URI,
-    "SPOTIFY_REFRESH_TOKEN": SPOTIFY_REFRESH_TOKEN,
-    "SETLIST_KEY": SETLIST_KEY,
-    "OPENAI_API_KEY": OPENAI_API_KEY,
-}
+# Só os nomes: antes cada uma aparecia três vezes no arquivo (constante, chave e
+# valor), e a lista congelava no import — se você corrigisse a variável no Render
+# sem reiniciar, o /health continuava reclamando dela.
+_OBRIGATORIAS = (
+    "TELEGRAM_TOKEN",
+    "TELEGRAM_WEBHOOK_SECRET",
+    "SPOTIPY_CLIENT_ID",
+    "SPOTIPY_CLIENT_SECRET",
+    "SPOTIPY_REDIRECT_URI",
+    "SPOTIFY_REFRESH_TOKEN",
+    "SETLIST_KEY",
+    "OPENAI_API_KEY",
+)
 
 
 def missing_config() -> list[str]:
-    """Nomes das variáveis obrigatórias que estão vazias ou ausentes."""
-    return sorted(name for name, value in _REQUIRED.items() if not value)
+    """Nomes das variáveis obrigatórias que estão vazias ou ausentes, agora."""
+    return sorted(nome for nome in _OBRIGATORIAS if not os.getenv(nome))

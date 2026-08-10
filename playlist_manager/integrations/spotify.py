@@ -19,6 +19,11 @@ from playlist_manager.models import Show, Song
 
 logger = logging.getLogger("playlist-bot")
 
+# Segundos até desistir de cada chamada. O spotipy não impõe limite por padrão, e
+# uma playlist grande faz uma busca por música: uma resposta pendurada seguraria
+# a thread e o pedido inteiro junto.
+TIMEOUT = 20
+
 # Sufixos que a setlist.fm costuma trazer no nome e que derrubam a busca exata.
 _RUIDO = re.compile(
     r"""\s*(?:
@@ -53,8 +58,10 @@ def make_auth_manager() -> SpotifyOAuth:
         client_secret=SPOTIPY_CLIENT_SECRET,
         redirect_uri=SPOTIPY_REDIRECT_URI,
         scope=SCOPES,
-        show_dialog=False
+        show_dialog=False,
+        requests_timeout=TIMEOUT,
     )
+
 
 def get_spotify_client() -> spotipy.Spotify:
     if not SPOTIFY_REFRESH_TOKEN:
@@ -68,7 +75,7 @@ def get_spotify_client() -> spotipy.Spotify:
         # "deu erro" genérico que só o log explicava.
         logger.warning("Não consegui renovar o token do Spotify: %s", e)
         raise SpotifyIndisponivel(str(e)) from e
-    return spotipy.Spotify(auth=token_info["access_token"])
+    return spotipy.Spotify(auth=token_info["access_token"], requests_timeout=TIMEOUT)
 
 
 # ---------- BUSCA DE FAIXAS ----------
@@ -89,15 +96,9 @@ def _consultas(song: Song) -> list[str]:
         f"{limpo} {artista}",
         limpo,
     ]
-
-    vistas, saida = set(), []
-    for q in brutas:
-        if q not in vistas:
-            vistas.add(q)
-            saida.append(q)
-    return saida
-
-
+    # dict preserva a ordem de inserção: tira as repetidas (comuns quando o nome
+    # já vem limpo) sem perder a cascata do mais específico ao mais tolerante.
+    return list(dict.fromkeys(brutas))
 
 
 def _e_sistemico(e: BaseException) -> bool:
@@ -171,25 +172,33 @@ def _ordenar(faixas: list[_Faixa]) -> list[_Faixa]:
 
 
 # ---------- SPOTIFY: CRIAR PLAYLIST ----------
-def create_playlist_with_songs(
-    show: Show, playlist_name: str | None = None
-) -> tuple[str | None, int, list[str]]:
-    """Cria a playlist do show no Spotify.
+# A API aceita no máximo 100 faixas por chamada de adição.
+LOTE_DE_FAIXAS = 100
 
-    Devolve (url, quantidade_adicionada, musicas_nao_encontradas). A url é None se
-    nenhuma faixa foi encontrada — nesse caso nada é criado.
-    """
-    sp = get_spotify_client()
 
-    encontradas: list[_Faixa] = []
-    vistos: set[str] = set()
+@dataclass(frozen=True)
+class _Resultado:
+    """O que a varredura da setlist encontrou no Spotify."""
+
+    faixas: list[_Faixa]
+    faltando: list[str]
+    # Músicas cuja busca nem chegou a rodar. Diferente de não encontrada: várias
+    # delas significam Spotify fora, não repertório ausente do catálogo.
+    indisponiveis: int
+    consultadas: int
+
+
+def _resolver_faixas(sp: spotipy.Spotify, songs: list[Song]) -> _Resultado:
+    """Procura cada música no Spotify, uma vez só por música."""
+    faixas: list[_Faixa] = []
     faltando: list[str] = []
+    vistos: set[str] = set()
     # A mesma música pode aparecer duas vezes (bis, medley). Guardar o resultado
     # evita repetir a busca e evita listá-la duas vezes como não encontrada.
     resolvidas: dict[tuple[str, str], dict | None] = {}
     indisponiveis = 0
 
-    for song in show.songs:
+    for song in songs:
         chave = (song.name, song.search_artist)
         if chave in resolvidas:
             continue
@@ -204,7 +213,7 @@ def create_playlist_with_songs(
             faltando.append(song.name)
         elif item["id"] not in vistos:
             vistos.add(item["id"])
-            encontradas.append(_Faixa(
+            faixas.append(_Faixa(
                 track_id=item["id"],
                 # Popularidade do Spotify: 0-100, pelo total de reproduções e o
                 # quão recentes elas são. Ausente vira 0 e cai para o desempate.
@@ -213,38 +222,60 @@ def create_playlist_with_songs(
                 nome=song.name,
             ))
 
-    track_ids = [f.track_id for f in _ordenar(encontradas)]
+    return _Resultado(faixas, faltando, indisponiveis, len(resolvidas))
 
-    # Se nada foi achado e houve falha de busca, o problema é o Spotify, não o
-    # repertório: sobe o erro em vez de dizer que nenhuma música existe.
-    if not track_ids and indisponiveis:
-        raise SpotifyIndisponivel(
-            f"Buscas no Spotify indisponíveis ({indisponiveis} de {len(resolvidas)})."
-        )
 
-    if faltando:
-        logger.info("Não achei no Spotify: %s", ", ".join(faltando))
+def _descricao(show: Show) -> str:
+    """Descrição da playlist. describe() pode vir vazio num show sem artista nem
+    local, e sem a guarda a descrição começaria com ' | '."""
+    partes = (show.describe(), "Sem spoiler: ordem por popularidade", "By NT77")
+    return " | ".join(p for p in partes if p)
 
-    # Só cria a playlist se houver o que colocar dentro — antes, um show sem
-    # nenhum match deixava uma playlist vazia na conta do usuário.
-    if not track_ids:
-        return None, 0, faltando
 
-    name = playlist_name or f"Setlist {show.artist}"
-    # describe() pode vir vazio num show sem artista nem local; sem a guarda a
-    # descrição começaria com " | ".
-    descricao = " | ".join(
-        p for p in (show.describe(), "Sem spoiler: ordem por popularidade", "By NT77") if p
-    )
+def _criar_playlist(sp: spotipy.Spotify, nome: str, descricao: str, track_ids: list[str]) -> str:
+    """Cria a playlist com as faixas já na ordem final e devolve a URL."""
     try:
         me = sp.current_user()["id"]
-        playlist = sp.user_playlist_create(user=me, name=name, public=True, description=descricao)
+        playlist = sp.user_playlist_create(user=me, name=nome, public=True, description=descricao)
         pid = playlist["id"]
-        for i in range(0, len(track_ids), 100):
-            sp.playlist_add_items(pid, track_ids[i:i+100])
+        for i in range(0, len(track_ids), LOTE_DE_FAIXAS):
+            sp.playlist_add_items(pid, track_ids[i:i + LOTE_DE_FAIXAS])
     except Exception as e:
         # Escopo insuficiente ou app em modo de desenvolvimento (403) caem aqui.
         logger.warning("Falha ao criar a playlist: %s", e)
         raise SpotifyIndisponivel(str(e)) from e
 
-    return playlist["external_urls"]["spotify"], len(track_ids), faltando
+    return playlist["external_urls"]["spotify"]
+
+
+def create_playlist_with_songs(
+    show: Show, playlist_name: str | None = None
+) -> tuple[str | None, int, list[str]]:
+    """Cria a playlist do show no Spotify.
+
+    Devolve (url, quantidade_adicionada, musicas_nao_encontradas). A url é None se
+    nenhuma faixa foi encontrada — nesse caso nada é criado.
+    """
+    sp = get_spotify_client()
+    resultado = _resolver_faixas(sp, show.songs)
+
+    # Se nada foi achado e houve falha de busca, o problema é o Spotify, não o
+    # repertório: sobe o erro em vez de dizer que nenhuma música existe.
+    if not resultado.faixas and resultado.indisponiveis:
+        raise SpotifyIndisponivel(
+            f"Buscas no Spotify indisponíveis "
+            f"({resultado.indisponiveis} de {resultado.consultadas})."
+        )
+
+    if resultado.faltando:
+        logger.info("Não achei no Spotify: %s", ", ".join(resultado.faltando))
+
+    # Só cria a playlist se houver o que colocar dentro — antes, um show sem
+    # nenhum match deixava uma playlist vazia na conta do usuário.
+    if not resultado.faixas:
+        return None, 0, resultado.faltando
+
+    track_ids = [f.track_id for f in _ordenar(resultado.faixas)]
+    nome = playlist_name or f"Setlist {show.artist}"
+    url = _criar_playlist(sp, nome, _descricao(show), track_ids)
+    return url, len(track_ids), resultado.faltando
