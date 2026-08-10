@@ -160,8 +160,9 @@ web: uvicorn main:app --host 0.0.0.0 --port $PORT
 1. **Build Command:** `pip install -r requirements.txt`
 2. **Start Command:** o do `Procfile` (ou repita o comando acima manualmente)
 3. Cadastre todas as variáveis de ambiente da tabela acima
-4. Confirme a versão do Python em **Settings → Environment**, variável `PYTHON_VERSION`
-   (o projeto é desenvolvido e testado no **3.11**)
+4. A versão do Python vem do [`.python-version`](.python-version) (**3.11**), que o Render lê
+   automaticamente. O mesmo arquivo define a versão usada no CI, então os três ambientes
+   — local, CI e produção — não divergem sozinhos.
 
 As dependências estão **fixadas em versões exatas**, diretas e transitivas, no
 `requirements.txt`. Isso é proposital: sem pin, um redeploy meses depois puxa versões
@@ -262,11 +263,12 @@ Painel do Render → serviço → **Logs**. As mensagens úteis:
 
 | Log | Significado |
 |---|---|
-| `Pulei N show(s) sem músicas registradas.` | Normal: a busca ignorou shows sem setlist cadastrada |
+| `Ignorei N show(s) sem músicas registradas.` | Normal: a busca ignorou shows sem setlist cadastrada |
 | `Usando setlist de <show> (N músicas).` | Show escolhido |
 | `Não achei no Spotify: ...` | Faixas sem correspondência no catálogo |
 | `Não consegui renovar o token do Spotify` | Refresh token vencido |
-| `Spotify indisponível` / `setlist.fm indisponível` | O serviço externo falhou, não o bot |
+| `Não consegui falar com a setlist.fm` / `Setlist.fm erro <status>` | O serviço externo falhou, não o bot |
+| `Busca falhou no Spotify` / `Falha ao criar a playlist` | O Spotify recusou a chamada (escopo, cota, credencial) |
 
 ## Rotas
 

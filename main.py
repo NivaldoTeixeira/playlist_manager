@@ -78,7 +78,10 @@ def callback(code: Optional[str] = None, error: Optional[str] = None):
     if not refresh:
         return PlainTextResponse("Não veio refresh_token. Tente novamente com show_dialog=true.", status_code=400)
 
-    logger.info("Seu SPOTIFY_REFRESH_TOKEN: %s", refresh)
+    # O valor é mostrado na resposta e não vai para o log: o log do Render fica
+    # retido e este token não expira sozinho, então gravá-lo deixaria uma
+    # credencial viva em texto puro no painel.
+    logger.info("Refresh token do Spotify gerado com sucesso.")
     return PlainTextResponse(
         "✅ Autorizado!\n\n"
         f"SPOTIFY_REFRESH_TOKEN = {refresh}\n\n"
@@ -90,7 +93,9 @@ async def telegram_webhook(token: str, request: Request):
     if token != WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="forbidden")
     data = await request.json()
-    logger.info("Recebido update do Telegram: %s", data)
+    # DEBUG e não INFO: o payload traz o texto da mensagem e o id do chat, que em
+    # produção não têm por que ficar retidos no log.
+    logger.debug("Recebido update do Telegram: %s", data)
 
     update = Update.de_json(data, tg_app.bot)
     if update is None:

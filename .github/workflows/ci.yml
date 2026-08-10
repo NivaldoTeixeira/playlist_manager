@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Mesma versão do .python-version e do Render. Rodar o CI em outra
+          # versão esconderia justamente a quebra que aconteceria no deploy.
+          python-version-file: .python-version
+          cache: pip
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Testes
+        # Os testes não fazem rede nem usam chave de API: o conftest preenche
+        # variáveis falsas antes de qualquer import do projeto.
+        run: pytest
