@@ -166,6 +166,64 @@ curl "https://api.telegram.org/bot$TELEGRAM_TOKEN/getWebhookInfo"
 > O `TELEGRAM_WEBHOOK_SECRET` faz parte da URL e funciona como senha: qualquer chamada
 > em `/webhook/<valor errado>` recebe `403`. Trate-o como segredo.
 
+## Testes
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+```
+
+Rodam sem chaves de API e sem rede — todas as integrações são substituídas. Cobrem
+seleção do show, covers, cascata de busca no Spotify, deduplicação, mensagens do bot
+e as rotas HTTP.
+
+## Quando alguma coisa para de funcionar
+
+O bot depende de quatro serviços externos, e as falhas mais comuns são de credencial
+ou configuração, não de código. Comece por `GET /health` e siga daqui.
+
+### O bot não responde nada
+
+Sintoma típico de quem volta ao projeto depois de um tempo. Se `/health` responde,
+o app está no ar e o problema é o Telegram não saber para onde entregar. Confira:
+
+```
+https://api.telegram.org/bot<TOKEN>/getWebhookInfo
+```
+
+Se `url` estiver vazia, ou apontando para um endereço antigo do Render, registre de novo:
+
+```
+https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://SEU-APP.onrender.com/webhook/<SECRET>&drop_pending_updates=true
+```
+
+O `<SECRET>` é o `TELEGRAM_WEBHOOK_SECRET` — se não bater exatamente, o app devolve
+`403` e o Telegram desiste. O `drop_pending_updates=true` descarta mensagens
+represadas, que senão seriam todas entregues de uma vez no primeiro acerto.
+
+> O webhook não some sozinho, mas some **se alguém chamar `getUpdates` nesse bot** —
+> o Telegram remove o webhook automaticamente nesse caso. Trocar a URL do serviço no
+> Render também exige registrar de novo.
+
+### "Achei o show, mas não consegui falar com o Spotify"
+
+O `SPOTIFY_REFRESH_TOKEN` venceu ou foi revogado. Refaça o fluxo de `/login`
+descrito acima, salve o novo valor no Render e espere o serviço voltar a **Live**
+antes de testar — o processo antigo continua no ar com a credencial velha durante
+o redeploy.
+
+### Onde ler o erro real
+
+Painel do Render → serviço → **Logs**. As mensagens úteis:
+
+| Log | Significado |
+|---|---|
+| `Pulei N show(s) sem músicas registradas.` | Normal: a busca ignorou shows sem setlist cadastrada |
+| `Usando setlist de <show> (N músicas).` | Show escolhido |
+| `Não achei no Spotify: ...` | Faixas sem correspondência no catálogo |
+| `Não consegui renovar o token do Spotify` | Refresh token vencido |
+| `Spotify indisponível` / `setlist.fm indisponível` | O serviço externo falhou, não o bot |
+
 ## Rotas
 
 | Rota | Descrição |

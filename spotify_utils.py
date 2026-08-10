@@ -34,6 +34,14 @@ _RUIDO = re.compile(
 _ASPAS = str.maketrans({"“": "", "”": "", '"': "", "‘": "'", "’": "'"})
 
 
+class SpotifyIndisponivel(RuntimeError):
+    """Não deu para falar com o Spotify: credencial, cota ou serviço fora."""
+
+
+class BuscaIndisponivel(Exception):
+    """Nenhuma consulta chegou a rodar — problema no Spotify, não música ausente."""
+
+
 # ---------- SPOTIFY HELPERS ----------
 def make_auth_manager() -> SpotifyOAuth:
     return SpotifyOAuth(
@@ -46,11 +54,17 @@ def make_auth_manager() -> SpotifyOAuth:
 
 def get_spotify_client() -> spotipy.Spotify:
     if not SPOTIFY_REFRESH_TOKEN:
-        raise RuntimeError("SPOTIFY_REFRESH_TOKEN não configurado. Use /login para gerar.")
+        raise SpotifyIndisponivel("SPOTIFY_REFRESH_TOKEN não configurado. Use /login para gerar.")
     am = make_auth_manager()
-    token_info = am.refresh_access_token(SPOTIFY_REFRESH_TOKEN)
-    access_token = token_info["access_token"]
-    return spotipy.Spotify(auth=access_token)
+    try:
+        token_info = am.refresh_access_token(SPOTIFY_REFRESH_TOKEN)
+    except Exception as e:
+        # Refresh token revogado ou vencido cai aqui. É a falha mais provável
+        # depois de um tempo sem uso, e sem essa distinção ela virava um
+        # "deu erro" genérico que só o log explicava.
+        logger.warning("Não consegui renovar o token do Spotify: %s", e)
+        raise SpotifyIndisponivel(str(e)) from e
+    return spotipy.Spotify(auth=token_info["access_token"])
 
 
 # ---------- BUSCA DE FAIXAS ----------
@@ -80,8 +94,6 @@ def _consultas(song: Song) -> list[str]:
     return saida
 
 
-class BuscaIndisponivel(Exception):
-    """Nenhuma consulta chegou a rodar — problema no Spotify, não música ausente."""
 
 
 def _e_sistemico(e: BaseException) -> bool:
@@ -106,7 +118,7 @@ def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> Optional[str]:
             # 401/403/429/5xx afetam toda a playlist: insistir nas próximas músicas
             # só queima cota e atrasa o erro real.
             if _e_sistemico(e):
-                raise
+                raise SpotifyIndisponivel(str(e)) from e
             logger.warning("Busca falhou no Spotify (%s): %s", q, e)
             continue
         rodou_alguma = True
@@ -165,7 +177,9 @@ def create_playlist_with_songs(
     # Se nada foi achado e houve falha de busca, o problema é o Spotify, não o
     # repertório: sobe o erro em vez de dizer que nenhuma música existe.
     if not track_ids and indisponiveis:
-        raise RuntimeError(f"Buscas no Spotify indisponíveis ({indisponiveis} de {len(resolvidas)}).")
+        raise SpotifyIndisponivel(
+            f"Buscas no Spotify indisponíveis ({indisponiveis} de {len(resolvidas)})."
+        )
 
     if faltando:
         logger.info("Não achei no Spotify: %s", ", ".join(faltando))
@@ -175,13 +189,17 @@ def create_playlist_with_songs(
     if not track_ids:
         return None, 0, faltando
 
-    me = sp.current_user()["id"]
     name = playlist_name or f"Setlist {show.artist}"
     descricao = f"{show.describe()} | By NT77" if show.describe() else "By NT77"
-    playlist = sp.user_playlist_create(user=me, name=name, public=True, description=descricao)
-    pid = playlist["id"]
-
-    for i in range(0, len(track_ids), 100):
-        sp.playlist_add_items(pid, track_ids[i:i+100])
+    try:
+        me = sp.current_user()["id"]
+        playlist = sp.user_playlist_create(user=me, name=name, public=True, description=descricao)
+        pid = playlist["id"]
+        for i in range(0, len(track_ids), 100):
+            sp.playlist_add_items(pid, track_ids[i:i+100])
+    except Exception as e:
+        # Escopo insuficiente ou app em modo de desenvolvimento (403) caem aqui.
+        logger.warning("Falha ao criar a playlist: %s", e)
+        raise SpotifyIndisponivel(str(e)) from e
 
     return playlist["external_urls"]["spotify"], len(track_ids), faltando

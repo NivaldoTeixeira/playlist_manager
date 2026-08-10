@@ -5,6 +5,11 @@ from config import OPENAI_API_KEY
 
 logger = logging.getLogger("playlist-bot")
 
+
+class InterpretacaoIndisponivel(RuntimeError):
+    """Não deu para chamar o LLM: chave, cota ou serviço fora."""
+
+
 _oa_client = None
 
 
@@ -40,13 +45,17 @@ def parse_request(text: str):
         Texto: "{text}"
         """
     # Falhas de infraestrutura (chave ausente, rate limit, API fora) sobem para o
-    # handler, que avisa que deu erro. Engoli-las aqui faria todo pedido responder
+    # handler, que avisa o que houve. Engoli-las aqui faria todo pedido responder
     # "não entendi o artista", escondendo a causa real.
-    resp = get_openai_client().chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
+    try:
+        resp = get_openai_client().chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+    except Exception as e:
+        logger.warning("Não consegui chamar o LLM: %s", e)
+        raise InterpretacaoIndisponivel(str(e)) from e
     content = (resp.choices[0].message.content or "").strip()
 
     # Remove possíveis blocos de código Markdown

@@ -1,0 +1,4 @@
+# Dependências só de desenvolvimento. O Render instala apenas requirements.txt.
+# Uso: pip install -r requirements.txt -r requirements-dev.txt && pytest
+pytest==9.0.1
+pytest-asyncio==1.3.0

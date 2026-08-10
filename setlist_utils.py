@@ -11,6 +11,10 @@ logger = logging.getLogger("playlist-bot")
 API_URL = "https://api.setlist.fm/rest/1.0/search/setlists"
 
 
+class SetlistIndisponivel(RuntimeError):
+    """A setlist.fm não respondeu. Diferente de não existir show cadastrado."""
+
+
 @dataclass(frozen=True)
 class Song:
     name: str
@@ -72,8 +76,8 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
     """Busca na setlist.fm o show mais recente que tenha músicas registradas.
 
     Devolve None quando a busca rodou e não há resultado aproveitável. Levanta
-    RuntimeError quando a API falhou — são coisas diferentes: mandar o usuário
-    tentar outro nome quando a setlist.fm está fora só rende tentativa inútil.
+    SetlistIndisponivel quando a API falhou — são coisas diferentes: mandar o
+    usuário tentar outro nome com a setlist.fm fora só rende tentativa inútil.
     """
     headers = {"x-api-key": SETLIST_KEY, "Accept": "application/json"}
     params = {"artistName": artist, "p": 1}
@@ -82,14 +86,19 @@ def get_setlist(artist: str, city: Optional[str] = None, year: Optional[str] = N
     if year:
         params["year"] = year
 
-    r = requests.get(API_URL, headers=headers, params=params, timeout=20)
+    try:
+        r = requests.get(API_URL, headers=headers, params=params, timeout=20)
+    except requests.RequestException as e:
+        logger.warning("Não consegui falar com a setlist.fm: %s", e)
+        raise SetlistIndisponivel(str(e)) from e
+
     if r.status_code == 404:
         # A setlist.fm responde 404 quando a busca não casa com nada.
         logger.info("Nenhum show encontrado para %s (city=%s, year=%s)", artist, city, year)
         return None
     if r.status_code != 200:
         logger.error("Setlist.fm erro %s: %s", r.status_code, r.text[:200])
-        raise RuntimeError(f"setlist.fm respondeu {r.status_code}")
+        raise SetlistIndisponivel(f"setlist.fm respondeu {r.status_code}")
 
     resultados = r.json().get("setlist", [])
     if not resultados:

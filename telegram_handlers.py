@@ -2,9 +2,9 @@ import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
-from openai_utils import parse_request
-from setlist_utils import get_setlist
-from spotify_utils import create_playlist_with_songs
+from openai_utils import parse_request, InterpretacaoIndisponivel
+from setlist_utils import get_setlist, SetlistIndisponivel
+from spotify_utils import create_playlist_with_songs, SpotifyIndisponivel
 
 logger = logging.getLogger("playlist-bot")
 
@@ -53,6 +53,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             resto = f" e mais {len(faltando) - 5}" if len(faltando) > 5 else ""
             resposta += f"\n\nNão achei no Spotify: {amostra}{resto}."
         await update.message.reply_text(resposta)
+    # Cada serviço avisa quando é ele que está fora, para a resposta dizer o que
+    # houve em vez de um "deu erro" genérico que só o log explica.
+    except InterpretacaoIndisponivel:
+        logger.exception("LLM indisponível: %r", text)
+        await update.message.reply_text(
+            "Não consegui interpretar seu pedido agora — o serviço de IA não respondeu. "
+            "Tenta de novo daqui a pouco? 😬"
+        )
+    except SetlistIndisponivel:
+        logger.exception("setlist.fm indisponível: %r", text)
+        await update.message.reply_text(
+            "A setlist.fm não está respondendo agora, então não consigo buscar o show. "
+            "Tenta de novo daqui a pouco? 😬"
+        )
+    except SpotifyIndisponivel:
+        logger.exception("Spotify indisponível: %r", text)
+        await update.message.reply_text(
+            "Achei o show, mas não consegui falar com o Spotify — a autorização pode ter "
+            "vencido. Se persistir, refaça o /login e atualize o SPOTIFY_REFRESH_TOKEN. 😬"
+        )
     except Exception:
         # Detalhe da exceção fica no log; o usuário não precisa (nem deve) ver o texto cru.
         logger.exception("Erro ao processar pedido: %r", text)
