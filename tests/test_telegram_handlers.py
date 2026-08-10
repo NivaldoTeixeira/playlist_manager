@@ -19,6 +19,11 @@ class FakeMessage:
         self.enviadas.append(t)
 
 
+def contexto():
+    """Contexto mínimo do PTB: handle_text guarda o menu em user_data."""
+    return types.SimpleNamespace(user_data={})
+
+
 def show_exemplo(n=12):
     return Show(artist="Good Charlotte", venue="Espaço Unimed", city="São Paulo",
                 date="31/08/2025", songs=[Song(f"M{i}", "Good Charlotte") for i in range(n)])
@@ -33,7 +38,7 @@ def rodar(monkeypatch, *, parse=None, setlist=None, playlist=None, texto=None):
                         playlist or (lambda s, n: ("http://sp/p1", 12, [])))
 
     msg = FakeMessage(texto) if texto else FakeMessage()
-    asyncio.run(th.handle_text(types.SimpleNamespace(message=msg), None))
+    asyncio.run(th.handle_text(types.SimpleNamespace(message=msg), contexto()))
     return msg.enviadas
 
 
@@ -104,8 +109,10 @@ def test_erro_inesperado_nao_vaza_detalhe(monkeypatch):
 # ---------- concorrência ----------
 def test_nao_bloqueia_o_event_loop(monkeypatch):
     """As integrações são síncronas; travar o loop atrasaria /health e outros webhooks."""
+    # Com cidade e ano o fluxo vai direto ao ponto, sem o menu de escolha — é o
+    # caminho que encadeia as três chamadas bloqueantes.
     monkeypatch.setattr(th, "parse_request",
-                        lambda t: (time.sleep(0.4) or ("Good Charlotte", None, None)))
+                        lambda t: (time.sleep(0.4) or ("Good Charlotte", "São Paulo", "2025")))
     monkeypatch.setattr(th, "get_setlist", lambda a, c, y: time.sleep(0.4) or show_exemplo())
     monkeypatch.setattr(th, "create_playlist_with_songs",
                         lambda s, n: time.sleep(0.4) or ("http://sp/p1", 12, []))
@@ -121,11 +128,14 @@ def test_nao_bloqueia_o_event_loop(monkeypatch):
 
         hb = asyncio.create_task(batimento())
         msg = FakeMessage()
-        await th.handle_text(types.SimpleNamespace(message=msg), None)
+        await th.handle_text(types.SimpleNamespace(message=msg), contexto())
         hb.cancel()
-        return atrasos
+        return atrasos, msg.enviadas
 
-    atrasos = asyncio.run(cenario())
+    atrasos, enviadas = asyncio.run(cenario())
+    # Sem isto o teste passaria mesmo se o fluxo tivesse caído num ramo de erro
+    # antes de chegar às chamadas bloqueantes.
+    assert "http://sp/p1" in enviadas[-1], f"o fluxo não completou: {enviadas}"
     assert atrasos, "o batimento não chegou a rodar"
     assert max(atrasos) < 0.2, f"event loop travou por {max(atrasos):.2f}s"
 

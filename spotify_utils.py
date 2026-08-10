@@ -228,7 +228,11 @@ def create_playlist_with_songs(
         return None, 0, faltando
 
     name = playlist_name or f"Setlist {show.artist}"
-    descricao = f"{show.describe()} | Sem spoiler: ordem por popularidade | By NT77"
+    # describe() pode vir vazio num show sem artista nem local; sem a guarda a
+    # descrição começaria com " | ".
+    descricao = " | ".join(
+        p for p in (show.describe(), "Sem spoiler: ordem por popularidade", "By NT77") if p
+    )
     try:
         me = sp.current_user()["id"]
         playlist = sp.user_playlist_create(user=me, name=name, public=True, description=descricao)

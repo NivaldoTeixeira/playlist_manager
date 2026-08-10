@@ -165,15 +165,40 @@ def test_media_mantem_so_o_que_se_repete():
     assert [s.name for s in su.average_setlist(shows)] == ["A", "B"]
 
 
-def test_media_respeita_a_ordem_tipica():
-    """Abertura no começo e bis no fim, mesmo com shows de tamanhos diferentes."""
+def test_media_ordena_da_mais_recorrente_para_a_menos():
+    """A ordem da playlist é decidida em _ordenar(); aqui só a recorrência."""
     shows = [
-        show_com(["abertura", "meio", "bis"]),
-        show_com(["abertura", "meio1", "meio2", "meio3", "bis"]),
+        show_com(["sempre", "quase_sempre"]),
+        show_com(["sempre", "quase_sempre"]),
+        show_com(["sempre", "quase_sempre"]),
+        show_com(["sempre", "metade"]),
     ]
-    resultado = [s.name for s in su.average_setlist(shows)]
-    assert resultado[0] == "abertura"
-    assert resultado[-1] == "bis"
+    assert [s.name for s in su.average_setlist(shows)] == ["sempre", "quase_sempre"]
+
+
+def test_media_conta_shows_e_nao_execucoes():
+    """Música tocada duas vezes na mesma noite não pode contar dobrado."""
+    shows = [
+        show_com(["repetida", "repetida"]),   # bis: duas execuções, um show
+        show_com(["repetida", "repetida"]),
+        show_com(["repetida", "repetida"]),
+        show_com(["outra"]),
+        show_com(["outra"]),
+        show_com(["outra"]),
+        show_com(["outra"]),
+    ]
+    media = {s.name: s.plays for s in su.average_setlist(shows)}
+    # "repetida" está em 3 dos 7 shows: abaixo da metade, fica de fora.
+    assert media == {"outra": 4}
+
+
+def test_media_prefere_o_registro_que_identifica_o_cover():
+    """Se um show anotou o artista original e outro não, vale a anotação."""
+    shows = [
+        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "GC")]),          # sem anotação
+        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "The Beatles")]),
+    ]
+    assert su.average_setlist(shows)[0].search_artist == "The Beatles"
 
 
 def test_media_agrupa_ignorando_caixa():

@@ -1,8 +1,7 @@
 import logging
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from math import ceil
-from statistics import mean
 from typing import Optional
 
 import requests
@@ -148,31 +147,40 @@ def average_setlist(shows: list[Show], min_frequency: float = FREQUENCIA_MINIMA)
 
     A setlist.fm calcula isso no site, mas não expõe na API 1.0 — então a conta é
     feita aqui: entram as músicas presentes em pelo menos `min_frequency` dos
-    shows, ordenadas pela posição média que ocupam.
+    shows, da mais recorrente para a menos.
+
+    A ordem aqui é informativa; quem define a ordem da playlist é `_ordenar()`,
+    em spotify_utils, que não segue o roteiro do show de propósito.
     """
     if not shows:
         return []
 
-    contagem: Counter = Counter()
-    posicoes: dict[str, list[float]] = defaultdict(list)
+    # Conta em quantos SHOWS a música apareceu, não quantas vezes foi tocada:
+    # música repetida na mesma noite (bis, medley) não pode contar dobrado e
+    # inflar a presença dela na média.
+    em_shows: Counter = Counter()
     exemplar: dict[str, Song] = {}
 
     for show in shows:
-        ultimo = max(len(show.songs) - 1, 1)
-        for i, song in enumerate(show.songs):
+        for chave in {s.name.casefold() for s in show.songs}:
+            em_shows[chave] += 1
+        for song in show.songs:
             chave = song.name.casefold()
-            contagem[chave] += 1
-            # Posição relativa (0 = abertura, 1 = encerramento) para comparar
-            # shows de tamanhos diferentes.
-            posicoes[chave].append(i / ultimo)
-            exemplar.setdefault(chave, song)
+            anterior = exemplar.get(chave)
+            # Prefere o registro que identifica o cover: se um show anotou o
+            # artista original e outro não, ficar com o segundo faria a busca no
+            # Spotify procurar a música pela banda do show e não achar nada.
+            if anterior is None or (
+                anterior.search_artist == show.artist and song.search_artist != show.artist
+            ):
+                exemplar[chave] = song
 
     minimo = max(1, ceil(len(shows) * min_frequency))
-    frequentes = [chave for chave, n in contagem.items() if n >= minimo]
-    frequentes.sort(key=lambda chave: mean(posicoes[chave]))
+    frequentes = [chave for chave, n in em_shows.items() if n >= minimo]
+    frequentes.sort(key=lambda chave: (-em_shows[chave], exemplar[chave].name.casefold()))
 
     logger.info(
-        "Setlist média de %d shows: %d músicas (mínimo de %d aparições).",
+        "Setlist média de %d shows: %d músicas (presentes em %d shows ou mais).",
         len(shows), len(frequentes), minimo,
     )
-    return [replace(exemplar[chave], plays=contagem[chave]) for chave in frequentes]
+    return [replace(exemplar[chave], plays=em_shows[chave]) for chave in frequentes]

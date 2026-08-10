@@ -1,5 +1,8 @@
 import asyncio
 import logging
+from collections import OrderedDict
+from typing import Optional
+from uuid import uuid4
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -20,6 +23,11 @@ logger = logging.getLogger("playlist-bot")
 # Prefixos do callback_data dos botões (o Telegram limita a 64 bytes).
 ESCOLHA_SHOW = "show"
 ESCOLHA_MEDIA = "media"
+
+# Menus antigos continuam clicáveis no histórico do chat, então cada um recebe um
+# token próprio: sem isso o botão de um pedido antigo montaria a playlist com a
+# lista do pedido mais recente.
+MENUS_GUARDADOS = 5
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -45,14 +53,24 @@ def _mensagem_de_erro(exc: BaseException) -> str:
     return "Deu erro aqui do meu lado... tenta de novo daqui a pouco? 😬"
 
 
-def _montar_menu(shows: list[Show]) -> InlineKeyboardMarkup:
+def _guardar_menu(context: ContextTypes.DEFAULT_TYPE, artist: str, shows: list[Show]) -> str:
+    """Guarda a lista sob um token e devolve o token para os botões carregarem."""
+    menus = context.user_data.setdefault("menus", OrderedDict())
+    token = uuid4().hex[:8]
+    menus[token] = {"artist": artist, "shows": shows}
+    while len(menus) > MENUS_GUARDADOS:
+        menus.popitem(last=False)
+    return token
+
+
+def _montar_menu(shows: list[Show], token: str) -> InlineKeyboardMarkup:
     botoes = [[InlineKeyboardButton(
-        f"🎯 Setlist média ({len(shows)} shows)", callback_data=ESCOLHA_MEDIA
+        f"🎯 Setlist média ({len(shows)} shows)", callback_data=f"{ESCOLHA_MEDIA}:{token}"
     )]]
     for i, show in enumerate(shows):
         rotulo = " · ".join(p for p in (show.date, show.city or show.venue) if p) or f"Show {i + 1}"
         botoes.append([InlineKeyboardButton(
-            f"{rotulo} ({len(show.songs)})", callback_data=f"{ESCOLHA_SHOW}:{i}"
+            f"{rotulo} ({len(show.songs)})", callback_data=f"{ESCOLHA_SHOW}:{token}:{i}"
         )])
     return InlineKeyboardMarkup(botoes)
 
@@ -107,33 +125,64 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await responder("Não achei nenhuma setlist 😬")
             return
 
-        # Guardado para o clique no botão; o callback só carrega o índice.
-        context.user_data["escolha"] = {"artist": artist, "shows": shows}
+        token = _guardar_menu(context, artist, shows)
         await responder(
             f"Achei os {len(shows)} shows mais recentes do {artist}. "
             "Escolhe um, ou pega a setlist média:",
-            reply_markup=_montar_menu(shows),
+            reply_markup=_montar_menu(shows, token),
         )
     except Exception as e:
         logger.exception("Erro ao processar pedido: %r", text)
         await responder(_mensagem_de_erro(e))
 
 
+def _interpretar(data: str) -> tuple[str, str, Optional[int]]:
+    """Quebra o callback_data em (ação, token, índice). Levanta ValueError se torto."""
+    partes = data.split(":")
+    if len(partes) == 2 and partes[0] == ESCOLHA_MEDIA:
+        return ESCOLHA_MEDIA, partes[1], None
+    if len(partes) == 3 and partes[0] == ESCOLHA_SHOW:
+        return ESCOLHA_SHOW, partes[1], int(partes[2])
+    raise ValueError(data)
+
+
 async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()  # tira o "carregando" do botão
-    responder = query.message.reply_text
 
-    pendente = context.user_data.get("escolha")
-    if not pendente:
-        # user_data vive em memória: um restart do serviço leva a lista embora.
+    # query.message pode ser None ou inacessível quando o botão tem mais de 48h,
+    # então a resposta sai pelo chat, não pela mensagem.
+    chat = update.effective_chat
+
+    async def responder(texto):
+        await context.bot.send_message(chat_id=chat.id, text=texto)
+
+    try:
+        acao, token, indice = _interpretar(query.data)
+    except ValueError:
+        logger.warning("Callback data não reconhecido: %r", query.data)
+        await responder("Não reconheci essa escolha 😅 Manda o pedido de novo?")
+        return
+
+    menu = context.user_data.get("menus", {}).get(token)
+    if menu is None:
+        # user_data vive em memória: um restart do serviço leva as listas embora.
         await responder("Essa lista expirou 😅 Manda o pedido de novo que eu busco os shows.")
         return
 
-    try:
-        artist, shows = pendente["artist"], pendente["shows"]
+    # Montar a playlist leva dezenas de segundos; sem isso um toque duplo criaria
+    # duas playlists idênticas.
+    em_andamento = context.user_data.setdefault("em_andamento", set())
+    if token in em_andamento:
+        logger.info("Ignorando toque repetido no menu %s.", token)
+        return
+    em_andamento.add(token)
 
-        if query.data == ESCOLHA_MEDIA:
+    try:
+        await _remover_teclado(query)
+        artist, shows = menu["artist"], menu["shows"]
+
+        if acao == ESCOLHA_MEDIA:
             songs = average_setlist(shows)
             if not songs:
                 await responder(
@@ -148,15 +197,27 @@ async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"na maioria dos últimos {len(shows)} shows."
             )
         else:
-            indice = int(query.data.split(":", 1)[1])
+            if not 0 <= indice < len(shows):
+                logger.warning("Índice fora da lista: %r", query.data)
+                await responder("Não reconheci essa escolha 😅 Manda o pedido de novo?")
+                return
             show = shows[indice]
             nome = f"Setlist {artist} {show.city or ''} {show.date or ''}".strip()
             await responder(f"Beleza: {show.describe()} ({len(show.songs)} músicas).")
 
+        # Fora do tratamento de escolha inválida: uma falha do Spotify aqui precisa
+        # chegar como falha do Spotify, não como "não reconheci essa escolha".
         await _criar_e_responder(responder, show, nome)
-    except (IndexError, ValueError, KeyError):
-        logger.exception("Escolha inválida: %r", query.data)
-        await responder("Não reconheci essa escolha 😅 Manda o pedido de novo?")
     except Exception as e:
         logger.exception("Erro ao montar a escolha: %r", query.data)
         await responder(_mensagem_de_erro(e))
+    finally:
+        em_andamento.discard(token)
+
+
+async def _remover_teclado(query) -> None:
+    """Tira os botões da mensagem; falha aqui não pode atrapalhar o pedido."""
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception as e:
+        logger.debug("Não consegui remover o teclado: %s", e)

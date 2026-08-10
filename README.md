@@ -57,9 +57,14 @@ expõe isso** — só busca de setlists, artistas, cidades e venues. Então o c�
 feito aqui, em `average_setlist()`, sobre os mesmos 10 shows já baixados:
 
 - entram as músicas presentes em pelo menos **metade** dos shows (`FREQUENCIA_MINIMA`);
-- a ordem segue a **posição média relativa** de cada música, então abertura fica no
-  começo e bis no fim mesmo com shows de tamanhos diferentes;
-- a comparação ignora maiúsculas, e cover mantém o artista original para a busca.
+- conta em quantos **shows** a música apareceu, não quantas vezes foi tocada — bis e
+  medley na mesma noite não contam dobrado;
+- a comparação ignora maiúsculas, e se um show anotou o artista original de um cover
+  e outro não, vale a anotação, senão a busca no Spotify procuraria pela banda errada.
+
+A ordem em que a média sai daqui é apenas informativa (da mais recorrente para a
+menos). Quem decide a ordem da playlist é sempre **[A ordem da playlist](#a-ordem-da-playlist)**,
+logo abaixo.
 
 Se os shows não tiverem repertório em comum suficiente, o bot avisa e sugere escolher
 um show específico, em vez de devolver playlist vazia.
