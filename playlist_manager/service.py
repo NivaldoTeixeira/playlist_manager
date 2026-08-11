@@ -52,7 +52,11 @@ class Playlist:
 
     url: str | None
     adicionadas: int
+    # Procuradas e ausentes do catálogo do Spotify.
     faltando: list[str]
+    # Buscas que falharam. Separadas porque "não existe" e "não deu para
+    # procurar" pedem reações diferentes de quem pediu a playlist.
+    nao_verificadas: list[str]
 
     @property
     def criada(self) -> bool:
@@ -87,8 +91,15 @@ def setlist_media(artist: str, shows: list[Show]) -> Show | None:
 
 async def criar_playlist(show: Show, nome: str) -> Playlist:
     """Cria a playlist no Spotify e devolve o link com as faixas não encontradas."""
-    url, adicionadas, faltando = await asyncio.to_thread(create_playlist_with_songs, show, nome)
-    return Playlist(url=url, adicionadas=adicionadas, faltando=faltando)
+    url, adicionadas, faltando, nao_verificadas = await asyncio.to_thread(
+        create_playlist_with_songs, show, nome
+    )
+    return Playlist(
+        url=url,
+        adicionadas=adicionadas,
+        faltando=faltando,
+        nao_verificadas=nao_verificadas,
+    )
 
 
 # ---------- nome da playlist ----------

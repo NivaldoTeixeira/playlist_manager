@@ -35,6 +35,10 @@ O webhook apenas **enfileira** o update e responde `ok` na hora. O processamento
 em segundo plano, porque criar a playlist demora mais que o timeout do Telegram — se
 a resposta atrasasse, o Telegram reenviaria o mesmo update e criaria playlist duplicada.
 
+O bot é montado com `concurrent_updates`, então pedidos de pessoas diferentes andam ao
+mesmo tempo. O padrão do `python-telegram-bot` é processar **um por vez**, o que poria
+todo mundo numa fila atrás de um pedido de 30 a 60 segundos.
+
 | Arquivo | Responsabilidade |
 |---|---|
 | `playlist_manager/main.py` | App FastAPI, rotas e ciclo de vida do bot |
@@ -122,6 +126,12 @@ de tributo ou karaokê. **Covers** usam o artista original da música, não a ba
 show. Músicas repetidas (bis, medley) entram uma vez só, e as que não foram
 encontradas são listadas na resposta em vez de sumirem caladas.
 
+A resposta separa **duas coisas diferentes**: "não achei no Spotify" é repertório que o
+catálogo não tem, e "o Spotify falhou ao procurar" é busca que nem chegou a rodar. Só a
+segunda vale tentar de novo — juntá-las diria que a música não existe quando ninguém
+chegou a olhar. Se *nenhuma* busca rodou, o bot nem cria playlist: reporta falha do
+Spotify.
+
 ## Variáveis de ambiente
 
 Todas as da tabela são obrigatórias. As opcionais estão logo abaixo dela.
@@ -170,10 +180,11 @@ Para conferir o que está faltando, chame `GET /health`:
 { "ok": false, "missing_config": ["SETLIST_KEY", "SPOTIFY_REFRESH_TOKEN"] }
 ```
 
-A única exceção é o `TELEGRAM_TOKEN`: sem ele o `python-telegram-bot` se recusa a
-construir o bot e o processo não inicia, com o erro
-`InvalidToken: You must pass the token you received from https://t.me/Botfather!`.
-Se o deploy estiver em crash-loop com essa mensagem, é essa variável que está faltando.
+Isso vale inclusive para o `TELEGRAM_TOKEN`: sem ele o bot não é montado — o
+`python-telegram-bot` recusa um token vazio — mas o serviço sobe assim mesmo, registra
+`TELEGRAM_TOKEN ausente: subindo sem o bot` no log e o `/health` responde dizendo o que
+falta. O `/webhook` devolve `503` enquanto durar, que faz o Telegram reenviar depois em
+vez de descartar o update.
 
 ## Rodando localmente
 
@@ -222,9 +233,10 @@ faça isso de forma deliberada e teste antes.
 Dois comportamentos que valem conhecer antes de investigar um incidente:
 
 - **O startup depende da API do Telegram.** `Application.initialize()` faz uma chamada
-  `getMe`, então token revogado ou instabilidade do Telegram aborta o boot e o
+  `getMe`, então **token revogado ou instabilidade do Telegram aborta o boot** e o
   `/health` não chega a responder. Um serviço que não sobe e cujo `/health` não
-  responde aponta para o Telegram, não para as outras integrações.
+  responde aponta para o Telegram, não para as outras integrações. (Token *ausente* é
+  diferente: aí o bot nem é montado e o serviço sobe normalmente.)
 - **Entrega é at-most-once.** O webhook confirma o update antes de processá-lo, o que
   elimina a duplicação por timeout. O preço é o oposto: se o serviço reiniciar com um
   pedido em andamento, ele se perde e o Telegram não reenvia — o usuário precisa pedir

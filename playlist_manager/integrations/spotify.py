@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 
 import spotipy
+from spotipy.cache_handler import MemoryCacheHandler
 from spotipy.oauth2 import SpotifyOAuth
 
 from playlist_manager.config import (
@@ -53,6 +54,15 @@ class BuscaIndisponivel(Exception):
 
 # ---------- SPOTIFY HELPERS ----------
 def make_auth_manager() -> SpotifyOAuth:
+    """O gerenciador de OAuth, sem cache em disco.
+
+    Por padrão o spotipy grava um arquivo `.cache` no diretório de trabalho a
+    cada renovação de token. Isso atrapalhava de duas formas: o `/callback`
+    devolvia o token guardado em vez de trocar o código novo — quebrando a
+    recuperação de credencial vencida, que é justamente quando ele é usado — e
+    deixava uma credencial viva em disco no servidor. Quem manda aqui é o
+    SPOTIFY_REFRESH_TOKEN do ambiente, então o cache não tem função.
+    """
     return SpotifyOAuth(
         client_id=SPOTIPY_CLIENT_ID,
         client_secret=SPOTIPY_CLIENT_SECRET,
@@ -60,6 +70,7 @@ def make_auth_manager() -> SpotifyOAuth:
         scope=SCOPES,
         show_dialog=False,
         requests_timeout=TIMEOUT,
+        cache_handler=MemoryCacheHandler(),
     )
 
 
@@ -86,7 +97,10 @@ def _limpar(nome: str) -> str:
 
 def _consultas(song: Song) -> list[str]:
     """Consultas do mais específico ao mais tolerante, sem repetir."""
-    nome, artista = song.name.translate(_ASPAS), song.search_artist
+    # O nome do artista também é delimitado por aspas em artist:"...", então
+    # precisa da mesma limpeza: sem ela um 'Weird Al' Yankovic ou um artista com
+    # aspas tipográficas quebrava as duas consultas precisas.
+    nome, artista = song.name.translate(_ASPAS), song.search_artist.translate(_ASPAS)
     limpo = _limpar(nome)
 
     brutas = [
@@ -181,10 +195,12 @@ class _Resultado:
     """O que a varredura da setlist encontrou no Spotify."""
 
     faixas: list[_Faixa]
+    # Buscadas e ausentes do catálogo.
     faltando: list[str]
-    # Músicas cuja busca nem chegou a rodar. Diferente de não encontrada: várias
-    # delas significam Spotify fora, não repertório ausente do catálogo.
-    indisponiveis: int
+    # Buscas que nem chegaram a rodar. É outra coisa: dizer que estas "não estão
+    # no Spotify" seria mentira, porque ninguém chegou a olhar. Ficam separadas
+    # para o usuário saber que pode tentar de novo e conseguir mais faixas.
+    nao_verificadas: list[str]
     consultadas: int
 
 
@@ -196,20 +212,22 @@ def _resolver_faixas(sp: spotipy.Spotify, songs: list[Song]) -> _Resultado:
     # A mesma música pode aparecer duas vezes (bis, medley). Guardar o resultado
     # evita repetir a busca e evita listá-la duas vezes como não encontrada.
     resolvidas: dict[tuple[str, str], dict | None] = {}
-    indisponiveis = 0
+    nao_verificadas: list[str] = []
 
     for song in songs:
         chave = (song.name, song.search_artist)
         if chave in resolvidas:
             continue
+        verificou = True
         try:
             item = _buscar_faixa(sp, song)
         except BuscaIndisponivel:
-            indisponiveis += 1
-            item = None
+            verificou, item = False, None
         resolvidas[chave] = item
 
-        if not item:
+        if not verificou:
+            nao_verificadas.append(song.name)
+        elif item is None:
             faltando.append(song.name)
         elif item["id"] not in vistos:
             vistos.add(item["id"])
@@ -222,7 +240,7 @@ def _resolver_faixas(sp: spotipy.Spotify, songs: list[Song]) -> _Resultado:
                 nome=song.name,
             ))
 
-    return _Resultado(faixas, faltando, indisponiveis, len(resolvidas))
+    return _Resultado(faixas, faltando, nao_verificadas, len(resolvidas))
 
 
 def _descricao(show: Show) -> str:
@@ -250,32 +268,41 @@ def _criar_playlist(sp: spotipy.Spotify, nome: str, descricao: str, track_ids: l
 
 def create_playlist_with_songs(
     show: Show, playlist_name: str | None = None
-) -> tuple[str | None, int, list[str]]:
+) -> tuple[str | None, int, list[str], list[str]]:
     """Cria a playlist do show no Spotify.
 
-    Devolve (url, quantidade_adicionada, musicas_nao_encontradas). A url é None se
-    nenhuma faixa foi encontrada — nesse caso nada é criado.
+    Devolve (url, quantidade_adicionada, nao_encontradas, nao_verificadas). A url
+    é None se nenhuma faixa foi encontrada — nesse caso nada é criado.
+
+    As duas listas são separadas de propósito: a primeira é repertório que o
+    catálogo do Spotify não tem, a segunda é busca que falhou. Juntá-las diria ao
+    usuário que a música não existe quando ninguém chegou a procurar.
     """
     sp = get_spotify_client()
     resultado = _resolver_faixas(sp, show.songs)
 
     # Se nada foi achado e houve falha de busca, o problema é o Spotify, não o
     # repertório: sobe o erro em vez de dizer que nenhuma música existe.
-    if not resultado.faixas and resultado.indisponiveis:
+    if not resultado.faixas and resultado.nao_verificadas:
         raise SpotifyIndisponivel(
             f"Buscas no Spotify indisponíveis "
-            f"({resultado.indisponiveis} de {resultado.consultadas})."
+            f"({len(resultado.nao_verificadas)} de {resultado.consultadas})."
         )
 
     if resultado.faltando:
         logger.info("Não achei no Spotify: %s", ", ".join(resultado.faltando))
+    if resultado.nao_verificadas:
+        # Uma falha parcial ainda rende playlist, mas menor do que deveria. Sem
+        # este log, a diferença ficava sem explicação nenhuma.
+        logger.warning("Busca falhou, não pude verificar: %s",
+                       ", ".join(resultado.nao_verificadas))
 
     # Só cria a playlist se houver o que colocar dentro — antes, um show sem
     # nenhum match deixava uma playlist vazia na conta do usuário.
     if not resultado.faixas:
-        return None, 0, resultado.faltando
+        return None, 0, resultado.faltando, resultado.nao_verificadas
 
     track_ids = [f.track_id for f in _ordenar(resultado.faixas)]
     nome = playlist_name or f"Setlist {show.artist}"
     url = _criar_playlist(sp, nome, _descricao(show), track_ids)
-    return url, len(track_ids), resultado.faltando
+    return url, len(track_ids), resultado.faltando, resultado.nao_verificadas

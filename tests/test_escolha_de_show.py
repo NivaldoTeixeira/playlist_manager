@@ -1,6 +1,7 @@
 """Fluxo de escolha: pedido sem cidade nem ano oferece os shows recentes."""
 
 import asyncio
+import time
 import types
 
 import pytest
@@ -77,24 +78,28 @@ def integracoes(monkeypatch):
 
     def criar(show, nome):
         chamadas["playlists"].append((show, nome))
-        return "http://sp/p1", len(show.songs), []
+        return "http://sp/p1", len(show.songs), [], []
 
     monkeypatch.setattr(service, "create_playlist_with_songs", criar)
     return chamadas
 
 
 def texto(msg, context):
-    asyncio.run(th.handle_text(types.SimpleNamespace(message=msg), context))
+    asyncio.run(th.handle_text(types.SimpleNamespace(message=msg, effective_message=msg),
+                               context))
+
+
+def update_de_clique(data, message=None):
+    return types.SimpleNamespace(
+        callback_query=FakeQuery(data, message),
+        effective_chat=types.SimpleNamespace(id=CHAT_ID),
+    )
 
 
 def clique(data, context, message=None):
-    query = FakeQuery(data, message)
-    update = types.SimpleNamespace(
-        callback_query=query,
-        effective_chat=types.SimpleNamespace(id=CHAT_ID),
-    )
+    update = update_de_clique(data, message)
     asyncio.run(th.handle_escolha(update, context))
-    return query
+    return update.callback_query
 
 
 def token_do_menu(msg):
@@ -211,20 +216,66 @@ def test_menus_antigos_sao_descartados(integracoes, context):
 
 # ---------- toque duplo ----------
 def test_toque_duplo_cria_uma_playlist_so(monkeypatch, integracoes, context):
+    """Os dois toques rodam de verdade em paralelo, como o PTB os processa.
+
+    Chamar o segundo de dentro do primeiro (reentrância) passaria mesmo sem a
+    trava, porque a reentrância não é o que acontece em produção: o bot é
+    montado com concurrent_updates, então são duas tasks concorrentes.
+    """
     msg = FakeMessage()
     texto(msg, context)
     data = f"show:{token_do_menu(msg)}:0"
 
-    # Simula o segundo toque enquanto o primeiro ainda monta a playlist.
     def criar_lento(show, nome):
-        clique(data, context, msg)
+        # Segura a thread: é onde o segundo toque encontra o primeiro em curso.
+        time.sleep(0.2)
         integracoes["playlists"].append((show, nome))
-        return "http://sp/p1", 2, []
+        return "http://sp/p1", 2, [], []
 
     monkeypatch.setattr(service, "create_playlist_with_songs", criar_lento)
-    clique(data, context, msg)
 
+    async def dois_toques():
+        await asyncio.gather(
+            th.handle_escolha(update_de_clique(data, msg), context),
+            th.handle_escolha(update_de_clique(data, msg), context),
+        )
+
+    asyncio.run(dois_toques())
     assert len(integracoes["playlists"]) == 1
+
+
+def test_toque_em_botao_velho_nao_engole_o_pedido(integracoes, context):
+    """O Telegram recusa o answer de um callback antigo; o pedido tem que seguir."""
+    msg = FakeMessage()
+    texto(msg, context)
+
+    query = FakeQuery(f"show:{token_do_menu(msg)}:0", msg)
+
+    async def answer_recusado():
+        raise RuntimeError("Query is too old and response timeout expired")
+
+    query.answer = answer_recusado
+    update = types.SimpleNamespace(
+        callback_query=query, effective_chat=types.SimpleNamespace(id=CHAT_ID)
+    )
+    asyncio.run(th.handle_escolha(update, context))
+
+    assert "http://sp/p1" in context.bot.enviadas[-1]
+    assert len(integracoes["playlists"]) == 1
+
+
+def test_callback_sem_chat_nao_estoura(integracoes, context):
+    """Sem chat não há para onde responder; ignorar é melhor que AttributeError."""
+    msg = FakeMessage()
+    texto(msg, context)
+    update = types.SimpleNamespace(
+        callback_query=FakeQuery(f"show:{token_do_menu(msg)}:0", None),
+        effective_chat=None,
+    )
+    asyncio.run(th.handle_escolha(update, context))
+
+    assert integracoes["playlists"] == []
+    assert context.bot.enviadas == []
 
 
 def test_teclado_removido_apos_escolher(integracoes, context):

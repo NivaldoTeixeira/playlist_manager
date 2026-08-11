@@ -68,7 +68,7 @@ def somente_autorizados(handler: Handler) -> Handler:
 
 @somente_autorizados
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(messages.BOAS_VINDAS)
+    await update.effective_message.reply_text(messages.BOAS_VINDAS)
 
 
 # ---------- menu de escolha ----------
@@ -104,6 +104,18 @@ def _interpretar(data: str) -> tuple[str, str, int | None]:
     raise ValueError(data)
 
 
+async def _confirmar_toque(query: CallbackQuery) -> None:
+    """Tira o "carregando" do botão; é cosmético e não pode abortar o pedido.
+
+    O Telegram recusa o answer de um callback velho ("query is too old"), e essa
+    falha vinha antes do try do handler: o pedido morria sem nenhuma resposta.
+    """
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.debug("Não consegui responder ao toque: %s", e)
+
+
 async def _remover_teclado(query: CallbackQuery) -> None:
     """Tira os botões da mensagem; falha aqui não pode atrapalhar o pedido."""
     try:
@@ -121,15 +133,19 @@ async def _criar_e_responder(responder: Responder, show: Show, nome: str) -> Non
         await responder(messages.NADA_NO_SPOTIFY)
         return
     await responder(messages.playlist_pronta(
-        playlist.url, playlist.adicionadas, playlist.faltando
+        playlist.url, playlist.adicionadas, playlist.faltando, playlist.nao_verificadas
     ))
 
 
 # ---------- handlers ----------
 @somente_autorizados
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    responder = update.message.reply_text
+    # effective_message e não message: filters.TEXT também casa post de canal e
+    # mensagem editada, e nesses casos `update.message` é None. Editar a própria
+    # mensagem é comum, e derrubava o handler sem resposta nenhuma.
+    mensagem = update.effective_message
+    text = (mensagem.text or "").strip()
+    responder = mensagem.reply_text
     await responder(messages.PROCURANDO)
     try:
         pedido = await service.interpretar(text)
@@ -166,11 +182,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @somente_autorizados
 async def handle_escolha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()  # tira o "carregando" do botão
+    await _confirmar_toque(query)
 
-    # query.message pode ser None ou inacessível quando o botão tem mais de 48h,
-    # então a resposta sai pelo chat, não pela mensagem.
+    # A mensagem do botão pode estar inacessível (mais de 48h), e aí não dá para
+    # responder por ela — mas o chat continua vindo junto. effective_chat só é
+    # None em callback de mensagem inline, que este bot não usa; se aparecer, não
+    # há para onde responder.
     chat = update.effective_chat
+    if chat is None:
+        logger.warning("Callback sem chat associado, ignorando: %r", query.data)
+        return
 
     async def responder(texto: str) -> None:
         await context.bot.send_message(chat_id=chat.id, text=texto)

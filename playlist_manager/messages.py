@@ -89,17 +89,30 @@ def media_montada(artist: str, musicas: int, shows: int) -> str:
     )
 
 
-def playlist_pronta(url: str, adicionadas: int, faltando: list[str]) -> str:
+def _lista_curta(nomes: list[str]) -> str:
+    """Os primeiros nomes, resumindo o resto: a mensagem não pode virar um paredão."""
+    amostra = ", ".join(nomes[:FALTANTES_LISTADOS])
+    sobra = len(nomes) - FALTANTES_LISTADOS
+    return f"{amostra} e mais {sobra}" if sobra > 0 else amostra
+
+
+def playlist_pronta(
+    url: str, adicionadas: int, faltando: list[str], nao_verificadas: list[str] = ()
+) -> str:
     """O link e, se for o caso, o que não entrou.
 
-    Listar os faltantes existe porque antes eles sumiam calados e a playlist
-    vinha menor que a setlist sem explicação nenhuma.
-    """
-    resposta = f"Tá na mão ({adicionadas} músicas): {url}"
-    if not faltando:
-        return resposta
+    Listar o que ficou de fora existe porque antes essas músicas sumiam caladas e
+    a playlist vinha menor que a setlist sem explicação nenhuma.
 
-    amostra = ", ".join(faltando[:FALTANTES_LISTADOS])
-    sobra = len(faltando) - FALTANTES_LISTADOS
-    resto = f" e mais {sobra}" if sobra > 0 else ""
-    return f"{resposta}\n\nNão achei no Spotify: {amostra}{resto}."
+    As duas listas saem em frases diferentes: uma diz que o Spotify não tem a
+    música, a outra que a busca falhou. Só a segunda vale tentar de novo.
+    """
+    partes = [f"Tá na mão ({adicionadas} músicas): {url}"]
+    if faltando:
+        partes.append(f"Não achei no Spotify: {_lista_curta(faltando)}.")
+    if nao_verificadas:
+        partes.append(
+            f"O Spotify falhou ao procurar: {_lista_curta(list(nao_verificadas))}. "
+            "Manda o pedido de novo daqui a pouco que essas talvez entrem."
+        )
+    return "\n\n".join(partes)

@@ -74,6 +74,12 @@ def test_aspas_nao_quebram_a_query():
     assert 'track:"Heroes" artist:"David Bowie"' in sp_u._consultas(Song("“Heroes”", "David Bowie"))
 
 
+def test_aspas_no_artista_tambem_sao_limpas():
+    """artist:"..." usa o mesmo delimitador; sem limpar, a consulta quebra igual."""
+    for q in sp_u._consultas(Song("Amish Paradise", '"Weird Al" Yankovic')):
+        assert q.count('"') % 2 == 0
+
+
 def test_apostrofo_preservado():
     assert sp_u._consultas(Song("Don’t Stop", "Queen"))[0] == 'track:"Don\'t Stop" artist:"Queen"'
 
@@ -128,7 +134,7 @@ def test_cria_playlist_e_reporta_faltantes(usar):
     show = Show(artist="GC", venue="Espaço Unimed", city="São Paulo", date="31/08/2025",
                 songs=[Song("The Anthem", "GC"), Song("Lifestyles", "GC"), Song("Sumida", "GC")])
 
-    url, adicionadas, faltando = sp_u.create_playlist_with_songs(show, "Setlist GC")
+    url, adicionadas, faltando, _ = sp_u.create_playlist_with_songs(show, "Setlist GC")
 
     assert url == "http://sp/p1"
     assert adicionadas == 2 == len(fake.adicionadas)
@@ -141,7 +147,7 @@ def test_repetida_conta_uma_vez_e_busca_uma_vez(usar):
     fake = usar(FakeSpotify({'track:"X" artist:"GC"': [faixa("t1", "GC")]}))
     show = Show(artist="GC", songs=[Song("X", "GC")] * 3)
 
-    url, adicionadas, faltando = sp_u.create_playlist_with_songs(show, "P")
+    url, adicionadas, faltando, _ = sp_u.create_playlist_with_songs(show, "P")
 
     assert adicionadas == len(fake.adicionadas) == 1
     assert faltando == []
@@ -151,7 +157,7 @@ def test_repetida_conta_uma_vez_e_busca_uma_vez(usar):
 def test_repetida_ausente_listada_uma_vez(usar):
     usar(FakeSpotify({}))
     show = Show(artist="GC", songs=[Song("X", "GC")] * 3)
-    url, adicionadas, faltando = sp_u.create_playlist_with_songs(show, "P")
+    url, adicionadas, faltando, _ = sp_u.create_playlist_with_songs(show, "P")
     assert faltando == ["X"]
     assert url is None
 
@@ -159,9 +165,30 @@ def test_repetida_ausente_listada_uma_vez(usar):
 def test_nao_cria_playlist_vazia(usar):
     fake = usar(FakeSpotify({}))
     show = Show(artist="GC", songs=[Song("A", "GC")])
-    url, adicionadas, _ = sp_u.create_playlist_with_songs(show, "P")
+    url, adicionadas, _, _ = sp_u.create_playlist_with_songs(show, "P")
     assert (url, adicionadas) == (None, 0)
     assert fake.criadas == []
+
+
+def test_falha_parcial_nao_vira_musica_ausente(usar):
+    """A busca que não rodou não pode ser reportada como ausente do catálogo."""
+    class Intermitente(FakeSpotify):
+        def search(self, q, limit=10, type="track"):
+            self.tentativas.append(q)
+            if "Instavel" in q:
+                raise ValueError("timeout")
+            return {"tracks": {"items": self.catalogo.get(q, [])}}
+
+    usar(Intermitente({'track:"Boa" artist:"GC"': [faixa("t1", "GC")]}))
+    show = Show(artist="GC", songs=[Song("Boa", "GC"), Song("Instavel", "GC"),
+                                    Song("Sumida", "GC")])
+
+    url, adicionadas, faltando, nao_verificadas = sp_u.create_playlist_with_songs(show, "P")
+
+    assert url == "http://sp/p1"
+    assert adicionadas == 1
+    assert faltando == ["Sumida"], "só a que foi procurada e não existe"
+    assert nao_verificadas == ["Instavel"], "a que o Spotify não deixou procurar"
 
 
 def test_tudo_indisponivel_levanta(usar):

@@ -23,6 +23,11 @@ class FakeMessage:
         self.enviadas.append(t)
 
 
+def update_de(msg):
+    """O update como o PTB entrega: effective_message é o que os handlers leem."""
+    return types.SimpleNamespace(message=msg, effective_message=msg)
+
+
 def contexto():
     """Contexto mínimo do PTB: handle_text guarda o menu em user_data."""
     return types.SimpleNamespace(user_data={})
@@ -39,10 +44,10 @@ def rodar(monkeypatch, *, parse=None, setlist=None, playlist=None, texto=None):
                         parse or (lambda t: ("Good Charlotte", "São Paulo", "2025")))
     monkeypatch.setattr(service, "get_setlist", setlist or (lambda a, c, y: show_exemplo()))
     monkeypatch.setattr(service, "create_playlist_with_songs",
-                        playlist or (lambda s, n: ("http://sp/p1", 12, [])))
+                        playlist or (lambda s, n: ("http://sp/p1", 12, [], [])))
 
     msg = FakeMessage(texto) if texto else FakeMessage()
-    asyncio.run(th.handle_text(types.SimpleNamespace(message=msg), contexto()))
+    asyncio.run(th.handle_text(update_de(msg), contexto()))
     return msg.enviadas
 
 
@@ -54,13 +59,13 @@ def test_caminho_feliz(monkeypatch):
 
 def test_lista_faltantes_resumindo(monkeypatch):
     faltando = ["A", "B", "C", "D", "E", "F", "G"]
-    enviadas = rodar(monkeypatch, playlist=lambda s, n: ("http://sp/p1", 5, faltando))
+    enviadas = rodar(monkeypatch, playlist=lambda s, n: ("http://sp/p1", 5, faltando, []))
     assert "A, B, C, D, E" in enviadas[-1]
     assert "e mais 2" in enviadas[-1]
 
 
 def test_poucos_faltantes_sem_resumo(monkeypatch):
-    enviadas = rodar(monkeypatch, playlist=lambda s, n: ("http://sp/p1", 10, ["A", "B"]))
+    enviadas = rodar(monkeypatch, playlist=lambda s, n: ("http://sp/p1", 10, ["A", "B"], []))
     assert "A, B." in enviadas[-1]
     assert "e mais" not in enviadas[-1]
 
@@ -76,7 +81,7 @@ def test_sem_setlist(monkeypatch):
 
 
 def test_setlist_achada_mas_nada_no_spotify(monkeypatch):
-    enviadas = rodar(monkeypatch, playlist=lambda s, n: (None, 0, ["A"]))
+    enviadas = rodar(monkeypatch, playlist=lambda s, n: (None, 0, ["A"], []))
     assert "encontrei nenhuma dessas músicas" in enviadas[-1].lower()
 
 
@@ -119,7 +124,7 @@ def test_nao_bloqueia_o_event_loop(monkeypatch):
                         lambda t: (time.sleep(0.4) or ("Good Charlotte", "São Paulo", "2025")))
     monkeypatch.setattr(service, "get_setlist", lambda a, c, y: time.sleep(0.4) or show_exemplo())
     monkeypatch.setattr(service, "create_playlist_with_songs",
-                        lambda s, n: time.sleep(0.4) or ("http://sp/p1", 12, []))
+                        lambda s, n: time.sleep(0.4) or ("http://sp/p1", 12, [], []))
 
     async def cenario():
         atrasos = []
@@ -132,7 +137,7 @@ def test_nao_bloqueia_o_event_loop(monkeypatch):
 
         hb = asyncio.create_task(batimento())
         msg = FakeMessage()
-        await th.handle_text(types.SimpleNamespace(message=msg), contexto())
+        await th.handle_text(update_de(msg), contexto())
         hb.cancel()
         return atrasos, msg.enviadas
 
@@ -147,5 +152,39 @@ def test_nao_bloqueia_o_event_loop(monkeypatch):
 @pytest.mark.asyncio
 async def test_cmd_start():
     msg = FakeMessage()
-    await th.cmd_start(types.SimpleNamespace(message=msg), None)
+    await th.cmd_start(update_de(msg), None)
     assert "playlist" in msg.enviadas[0].lower()
+
+
+# ---------- updates que não são mensagem comum ----------
+def test_mensagem_editada_nao_derruba_o_handler(monkeypatch):
+    """filters.TEXT casa mensagem editada e post de canal, onde update.message é None."""
+    monkeypatch.setattr(service, "parse_request", lambda t: ("Good Charlotte", "SP", "2025"))
+    monkeypatch.setattr(service, "get_setlist", lambda a, c, y: show_exemplo())
+    monkeypatch.setattr(service, "create_playlist_with_songs",
+                        lambda s, n: ("http://sp/p1", 12, [], []))
+
+    msg = FakeMessage()
+    update = types.SimpleNamespace(message=None, effective_message=msg)
+    asyncio.run(th.handle_text(update, contexto()))
+
+    assert "http://sp/p1" in msg.enviadas[-1]
+
+
+def test_mensagem_sem_texto_nao_estoura(monkeypatch):
+    monkeypatch.setattr(service, "parse_request", lambda t: (None, None, None))
+    msg = FakeMessage()
+    msg.text = None
+    asyncio.run(th.handle_text(update_de(msg), contexto()))
+
+    assert "Não entendi o artista" in msg.enviadas[-1]
+
+
+def test_avisa_o_que_nao_pode_verificar(monkeypatch):
+    """Busca que falhou não é o mesmo que música ausente do catálogo."""
+    enviadas = rodar(monkeypatch,
+                     playlist=lambda s, n: ("http://sp/p1", 8, ["Sumida"], ["Instavel"]))
+
+    assert "Não achei no Spotify: Sumida" in enviadas[-1]
+    assert "Instavel" in enviadas[-1]
+    assert "falhou ao procurar" in enviadas[-1]

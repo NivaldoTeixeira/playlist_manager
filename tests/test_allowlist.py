@@ -36,6 +36,7 @@ class FakeMessage:
 def update_de(user_id, message=None):
     return types.SimpleNamespace(
         message=message,
+        effective_message=message,
         effective_user=types.SimpleNamespace(id=user_id),
         effective_chat=types.SimpleNamespace(id=user_id),
     )

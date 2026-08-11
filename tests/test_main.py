@@ -75,3 +75,36 @@ def test_webhook_antes_do_bot_pronto(client):
         del main.app.state.tg_app
     r = client.post(f"/webhook/{main.WEBHOOK_SECRET}", json={"update_id": 1})
     assert r.status_code == 503
+
+
+def test_bot_processa_updates_em_paralelo():
+    """Com o padrão do PTB (1) os pedidos viram fila e a trava de toque duplo não teria função."""
+    assert main.build_telegram_app().concurrent_updates > 1
+
+
+def test_sobe_sem_telegram_token(monkeypatch):
+    """Morrer no boot esconderia justamente o /health que diz o que falta."""
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "")
+    if hasattr(main.app.state, "tg_app"):
+        del main.app.state.tg_app
+
+    # O `with` dispara o lifespan; sem token ele não deve chamar a API do Telegram.
+    with TestClient(main.app) as cliente:
+        assert cliente.get("/health").status_code == 200
+        assert cliente.post(f"/webhook/{main.WEBHOOK_SECRET}", json={}).status_code == 503
+
+
+def test_callback_nao_reaproveita_token_do_cache(client, monkeypatch):
+    """A rota é usada quando o token velho não serve mais; devolvê-lo erraria o alvo."""
+    chamadas = {}
+
+    class FakeAuth:
+        def get_access_token(self, code, as_dict=True, check_cache=True):
+            chamadas["check_cache"] = check_cache
+            return {"refresh_token": "token-novo"}
+
+    monkeypatch.setattr(main, "make_auth_manager", FakeAuth)
+    r = client.get("/callback", params={"code": "abc"})
+
+    assert chamadas["check_cache"] is False
+    assert "token-novo" in r.text
