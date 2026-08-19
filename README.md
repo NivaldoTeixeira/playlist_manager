@@ -83,7 +83,8 @@ feito aqui, em `average_setlist()`, sobre os mesmos 10 shows já baixados:
 - conta em quantos **shows** a música apareceu, não quantas vezes foi tocada — bis e
   medley na mesma noite não contam dobrado;
 - a comparação ignora maiúsculas, e se um show anotou o artista original de um cover
-  e outro não, vale a anotação, senão a busca no Spotify procuraria pela banda errada.
+  e outro não, vale a anotação — ela é a alternativa de busca quando a banda do show
+  nunca gravou aquele cover.
 
 A ordem em que a média sai daqui é apenas informativa (da mais recorrente para a
 menos). Quem decide a ordem da playlist é sempre **[A ordem da playlist](#a-ordem-da-playlist)**,
@@ -121,10 +122,19 @@ a busca vai do mais específico ao mais tolerante e para no primeiro acerto:
 3. `nome limpo artista` — texto livre, tolera pontuação e grafia diferentes
 4. `nome limpo` — último recurso
 
-Entre os resultados o bot prefere o de artista correspondente, para não trazer versão
-de tributo ou karaokê. **Covers** usam o artista original da música, não a banda do
-show. Músicas repetidas (bis, medley) entram uma vez só, e as que não foram
-encontradas são listadas na resposta em vez de sumirem caladas.
+**Só entra na playlist faixa creditada ao artista esperado.** A busca do Spotify é
+aproximada mesmo com `artist:"..."`, então o primeiro resultado pode ser de outra
+banda: era assim que uma playlist de um artista ganhava a música de outro. A
+comparação de nomes ignora acento, pontuação, `The` na frente e `&`/`and`, porque
+setlist.fm e Spotify escrevem o mesmo artista de formas diferentes. Sem candidato do
+artista certo, a música é reportada como não encontrada em vez de virar faixa errada.
+
+**Covers** procuram primeiro a banda do show e só depois o artista original: se a
+banda gravou a própria versão, é ela que pertence à playlist do show dela; se nunca
+gravou, o original entra como alternativa para a música não sumir.
+
+Músicas repetidas (bis, medley) entram uma vez só, e as que não foram encontradas são
+listadas na resposta em vez de sumirem caladas.
 
 A resposta separa **duas coisas diferentes**: "não achei no Spotify" é repertório que o
 catálogo não tem, e "o Spotify falhou ao procurar" é busca que nem chegou a rodar. Só a

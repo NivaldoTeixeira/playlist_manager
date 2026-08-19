@@ -67,26 +67,60 @@ def test_limpar_nao_devolve_vazio():
 
 
 # ---------- montagem das consultas ----------
+def queries(song):
+    return [q for q, _ in sp_u._consultas(song)]
+
+
 def test_aspas_nao_quebram_a_query():
     """Aspas no termo fechariam track:"..." cedo e a música sumiria."""
-    for q in sp_u._consultas(Song("“Heroes”", "David Bowie")):
+    for q in queries(Song("“Heroes”", "David Bowie")):
         assert q.count('"') % 2 == 0
-    assert 'track:"Heroes" artist:"David Bowie"' in sp_u._consultas(Song("“Heroes”", "David Bowie"))
+    assert 'track:"Heroes" artist:"David Bowie"' in queries(Song("“Heroes”", "David Bowie"))
 
 
 def test_aspas_no_artista_tambem_sao_limpas():
     """artist:"..." usa o mesmo delimitador; sem limpar, a consulta quebra igual."""
-    for q in sp_u._consultas(Song("Amish Paradise", '"Weird Al" Yankovic')):
+    for q in queries(Song("Amish Paradise", '"Weird Al" Yankovic')):
         assert q.count('"') % 2 == 0
 
 
 def test_apostrofo_preservado():
-    assert sp_u._consultas(Song("Don’t Stop", "Queen"))[0] == 'track:"Don\'t Stop" artist:"Queen"'
+    assert queries(Song("Don’t Stop", "Queen"))[0] == 'track:"Don\'t Stop" artist:"Queen"'
 
 
 def test_consultas_sem_repeticao():
     consultas = sp_u._consultas(Song("Dammit", "blink-182"))
     assert len(consultas) == len(set(consultas))
+
+
+def test_cover_procura_a_banda_do_show_antes_do_artista_original():
+    """A versão da própria banda é a que pertence à playlist do show dela."""
+    song = Song("Nightcall", "Avenged Sevenfold", cover_of="Kavinsky")
+    consultas = queries(song)
+    primeira_original = min(i for i, q in enumerate(consultas) if "Kavinsky" in q)
+    ultima_banda = max(i for i, q in enumerate(consultas) if "Avenged Sevenfold" in q)
+    assert ultima_banda < primeira_original
+
+
+def test_sem_cover_so_procura_a_banda_do_show():
+    for _, aceitos in sp_u._consultas(Song("The Anthem", "Good Charlotte")):
+        assert aceitos == ("Good Charlotte",)
+
+
+# ---------- comparação de artista ----------
+@pytest.mark.parametrize("da_setlist,do_spotify", [
+    ("Blink-182", "blink-182"),
+    ("Mötley Crüe", "Motley Crue"),
+    ("The Beatles", "Beatles"),
+    ("Simon & Garfunkel", "Simon and Garfunkel"),
+])
+def test_mesmo_artista_apesar_da_grafia(da_setlist, do_spotify):
+    """Grafia diferente entre setlist.fm e Spotify não pode descartar a faixa certa."""
+    assert sp_u._e_do_artista(faixa("t1", do_spotify), da_setlist)
+
+
+def test_artista_diferente_nao_casa():
+    assert not sp_u._e_do_artista(faixa("t1", "Kavinsky"), "Avenged Sevenfold")
 
 
 # ---------- busca ----------
@@ -108,6 +142,45 @@ def test_prefere_artista_correspondente():
 def test_sem_match_devolve_none():
     fake = FakeSpotify({})
     assert sp_u._buscar_faixa(fake, Song("Inexistente", "X")) is None
+
+
+def test_outro_artista_nao_entra_na_playlist():
+    """O bug: a busca é aproximada e trazia a música de outra banda como se fosse."""
+    fake = FakeSpotify({'track:"Nightcall" artist:"Avenged Sevenfold"': [
+        faixa("do_kavinsky", "Kavinsky"),
+    ]})
+    assert sp_u._buscar_faixa(fake, Song("Nightcall", "Avenged Sevenfold")) is None
+
+
+def test_cover_prefere_a_versao_da_banda_do_show():
+    song = Song("Nightcall", "Avenged Sevenfold", cover_of="Kavinsky")
+    fake = FakeSpotify({
+        'track:"Nightcall" artist:"Avenged Sevenfold"': [faixa("do_a7x", "Avenged Sevenfold")],
+        'track:"Nightcall" artist:"Kavinsky"': [faixa("do_kavinsky", "Kavinsky")],
+    })
+    assert sp_u._buscar_faixa(fake, song)["id"] == "do_a7x"
+
+
+def test_cover_cai_para_o_original_quando_a_banda_nao_gravou():
+    """Sem o original, um cover que a banda nunca gravou sumiria da playlist."""
+    song = Song("Helter Skelter", "Good Charlotte", cover_of="The Beatles")
+    fake = FakeSpotify({
+        # A busca aproximada devolve o original mesmo pedindo a banda do show.
+        'track:"Helter Skelter" artist:"Good Charlotte"': [faixa("beatles", "The Beatles")],
+        'track:"Helter Skelter" artist:"The Beatles"': [faixa("beatles", "The Beatles")],
+    })
+    assert sp_u._buscar_faixa(fake, song)["id"] == "beatles"
+    # A versão da banda foi procurada primeiro, e só então a do artista original.
+    assert fake.tentativas[0] == 'track:"Helter Skelter" artist:"Good Charlotte"'
+
+
+def test_consulta_ampla_nao_desiste_do_artista_certo():
+    """Antes, o primeiro resultado da consulta ampla era aceito de qualquer banda."""
+    fake = FakeSpotify({
+        'track:"Dammit" artist:"blink-182"': [faixa("tributo", "Punk Goes Tribute")],
+        "Dammit blink-182": [faixa("tributo", "Punk Goes Tribute"), faixa("certo", "blink-182")],
+    })
+    assert sp_u._buscar_faixa(fake, Song("Dammit", "blink-182"))["id"] == "certo"
 
 
 @pytest.mark.parametrize("status", [401, 403, 429, 503])

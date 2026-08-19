@@ -2,6 +2,7 @@
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 
 import spotipy
@@ -95,21 +96,52 @@ def _limpar(nome: str) -> str:
     return _RUIDO.sub("", nome.translate(_ASPAS)).strip(" -–—") or nome.strip()
 
 
-def _consultas(song: Song) -> list[str]:
-    """Consultas do mais específico ao mais tolerante, sem repetir."""
+def _normalizar_artista(nome: str) -> str:
+    """Forma comparável de um nome de artista.
+
+    A setlist.fm e o Spotify escrevem o mesmo artista de formas diferentes
+    (acento, hífen, "&" no lugar de "and", "The" na frente). Comparar as duas
+    grafias cruas descartaria a faixa certa e a música cairia como ausente.
+    """
+    base = unicodedata.normalize("NFKD", nome.casefold())
+    base = "".join(c for c in base if not unicodedata.combining(c))
+    partes = [p for p in re.split(r"[^a-z0-9]+", base) if p and p not in ("the", "and")]
+    return " ".join(partes)
+
+
+def _e_do_artista(item: dict, artista: str) -> bool:
+    """A faixa é creditada ao artista procurado (inclusive como participação)?"""
+    alvo = _normalizar_artista(artista)
+    return any(_normalizar_artista(a.get("name", "")) == alvo for a in item.get("artists", []))
+
+
+def _consultas(song: Song) -> list[tuple[str, tuple[str, ...]]]:
+    """Consultas do mais específico ao mais tolerante, com os artistas que cada uma aceita.
+
+    Em cover a banda do show vem primeiro e o artista original só depois: quem
+    pediu a setlist de uma banda quer a versão dela, quando ela gravou uma.
+    """
     # O nome do artista também é delimitado por aspas em artist:"...", então
     # precisa da mesma limpeza: sem ela um 'Weird Al' Yankovic ou um artista com
     # aspas tipográficas quebrava as duas consultas precisas.
-    nome, artista = song.name.translate(_ASPAS), song.search_artist.translate(_ASPAS)
+    nome = song.name.translate(_ASPAS)
     limpo = _limpar(nome)
+    artistas = song.search_artists
 
-    brutas = [
-        f'track:"{nome}" artist:"{artista}"',
-        f'track:"{limpo}" artist:"{artista}"',
-        # Sem aspas o Spotify tolera pontuação e grafia diferentes.
-        f"{limpo} {artista}",
-        limpo,
-    ]
+    brutas: list[tuple[str, tuple[str, ...]]] = []
+    for artista in artistas:
+        a = artista.translate(_ASPAS)
+        brutas += [
+            (f'track:"{nome}" artist:"{a}"', (artista,)),
+            (f'track:"{limpo}" artist:"{a}"', (artista,)),
+            # Sem aspas o Spotify tolera pontuação e grafia diferentes.
+            (f"{limpo} {a}", (artista,)),
+        ]
+    # Último recurso: só o nome da música, para o caso de o artista estar escrito
+    # de um jeito que a consulta com artist:"..." não casa. O filtro de artista
+    # continua valendo em cima do resultado.
+    brutas.append((limpo, artistas))
+
     # dict preserva a ordem de inserção: tira as repetidas (comuns quando o nome
     # já vem limpo) sem perder a cascata do mais específico ao mais tolerante.
     return list(dict.fromkeys(brutas))
@@ -127,11 +159,16 @@ def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> dict | None:
     Devolve o item cru da API para o chamador aproveitar `popularity` além do id.
     Levanta BuscaIndisponivel quando nenhuma consulta chegou a rodar, para não
     reportar "não achei essa música" no que na verdade é falha do Spotify.
+
+    Só devolve faixa creditada a um dos artistas esperados. A busca do Spotify é
+    aproximada mesmo com artist:"...", então o primeiro resultado pode ser de
+    outra banda — era assim que uma playlist de um artista ganhava a música de
+    outro. Sem candidato do artista certo, a música entra como não encontrada,
+    que é a verdade e o usuário vê na resposta.
     """
-    artista_alvo = song.search_artist.casefold()
     rodou_alguma = False
 
-    for q in _consultas(song):
+    for q, aceitos in _consultas(song):
         try:
             items = sp.search(q=q, limit=5, type="track").get("tracks", {}).get("items", [])
         except Exception as e:
@@ -142,16 +179,13 @@ def _buscar_faixa(sp: spotipy.Spotify, song: Song) -> dict | None:
             logger.warning("Busca falhou no Spotify (%s): %s", q, e)
             continue
         rodou_alguma = True
-        if not items:
-            continue
 
-        # Entre os resultados, prefere um cujo artista bata com o esperado; as
-        # consultas sem aspas são amplas e o primeiro resultado pode ser de outro
-        # artista (cover, tributo, karaokê).
-        for item in items:
-            if any(a.get("name", "").casefold() == artista_alvo for a in item.get("artists", [])):
-                return item
-        return items[0]
+        # `aceitos` já vem na ordem de preferência (banda do show antes do
+        # artista original do cover), e dentro dela vale a ordem do Spotify.
+        for artista in aceitos:
+            for item in items:
+                if _e_do_artista(item, artista):
+                    return item
 
     if not rodou_alguma:
         raise BuscaIndisponivel(song.name)
@@ -215,7 +249,7 @@ def _resolver_faixas(sp: spotipy.Spotify, songs: list[Song]) -> _Resultado:
     nao_verificadas: list[str] = []
 
     for song in songs:
-        chave = (song.name, song.search_artist)
+        chave = (song.name, song.artist, song.cover_of)
         if chave in resolvidas:
             continue
         verificou = True

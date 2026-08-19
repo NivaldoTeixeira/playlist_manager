@@ -34,9 +34,11 @@ def _parse_songs(setlist: dict, artista_do_show: str) -> list[Song]:
             nome = song.get("name")
             if not nome:
                 continue
-            # Cover traz o artista original; sem isso a busca no Spotify erra.
+            # Cover guarda o artista original como alternativa de busca: a banda
+            # do show continua sendo a primeira opção, porque pode ter gravado a
+            # própria versão, mas se não gravou é o original que existe no Spotify.
             cover = (song.get("cover") or {}).get("name")
-            songs.append(Song(name=nome, search_artist=cover or artista_do_show))
+            songs.append(Song(name=nome, artist=artista_do_show, cover_of=cover))
     return songs
 
 
@@ -144,11 +146,9 @@ def average_setlist(shows: list[Show], min_frequency: float = FREQUENCIA_MINIMA)
             chave = song.name.casefold()
             anterior = exemplar.get(chave)
             # Prefere o registro que identifica o cover: se um show anotou o
-            # artista original e outro não, ficar com o segundo faria a busca no
-            # Spotify procurar a música pela banda do show e não achar nada.
-            if anterior is None or (
-                anterior.search_artist == show.artist and song.search_artist != show.artist
-            ):
+            # artista original e outro não, ficar com o segundo tiraria a única
+            # alternativa de busca de uma música que a banda talvez nunca gravou.
+            if anterior is None or (anterior.cover_of is None and song.cover_of is not None):
                 exemplar[chave] = song
 
     minimo = max(1, ceil(len(shows) * min_frequency))

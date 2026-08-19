@@ -10,12 +10,24 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class Song:
     name: str
-    # Artista a usar na busca do Spotify. Em covers é o artista original, não a
-    # banda do show — procurar "Helter Skelter" com artist:"Mötley Crüe" não acha.
-    search_artist: str
+    # Banda que tocou a música no show. É o primeiro artista procurado no
+    # Spotify, inclusive em cover: se a banda gravou a própria versão, é ela que
+    # pertence a uma playlist do show, não a gravação alheia.
+    artist: str
     # Em quantos shows a música apareceu. Vale 1 para um show único e serve de
     # critério de desempate na ordenação da playlist.
     plays: int = 1
+    # Artista original, quando a setlist.fm marca a música como cover. Serve de
+    # alternativa: procurar "Helter Skelter" só com artist:"Mötley Crüe" não acha
+    # nada se a banda nunca gravou o cover.
+    cover_of: str | None = None
+
+    @property
+    def search_artists(self) -> tuple[str, ...]:
+        """Artistas a procurar no Spotify, do preferido ao alternativo."""
+        if self.cover_of and self.cover_of.casefold() != self.artist.casefold():
+            return (self.artist, self.cover_of)
+        return (self.artist,)
 
 
 @dataclass(frozen=True)

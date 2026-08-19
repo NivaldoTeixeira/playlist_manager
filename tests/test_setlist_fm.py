@@ -80,17 +80,18 @@ def test_falha_de_rede_levanta(monkeypatch):
         su.get_setlist("Good Charlotte")
 
 
-def test_cover_usa_artista_original(responder):
-    """Procurar um cover com o nome da banda do show não acha nada no Spotify."""
+def test_cover_guarda_artista_original_como_alternativa(responder):
+    """A banda do show continua em primeiro: se ela gravou o cover, é a versão dela."""
     responder({"setlist": [setlist([
         {"name": "The Anthem"},
         {"name": "Helter Skelter", "cover": {"name": "The Beatles"}},
     ])]})
     show = su.get_setlist("Good Charlotte")
-    assert [(s.name, s.search_artist) for s in show.songs] == [
-        ("The Anthem", "Good Charlotte"),
-        ("Helter Skelter", "The Beatles"),
+    assert [(s.name, s.artist, s.cover_of) for s in show.songs] == [
+        ("The Anthem", "Good Charlotte", None),
+        ("Helter Skelter", "Good Charlotte", "The Beatles"),
     ]
+    assert show.songs[1].search_artists == ("Good Charlotte", "The Beatles")
 
 
 def test_junta_todos_os_sets_e_ignora_nome_vazio(responder):
@@ -196,9 +197,9 @@ def test_media_prefere_o_registro_que_identifica_o_cover():
     """Se um show anotou o artista original e outro não, vale a anotação."""
     shows = [
         su.Show(artist="GC", songs=[su.Song("Helter Skelter", "GC")]),          # sem anotação
-        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "The Beatles")]),
+        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "GC", cover_of="The Beatles")]),
     ]
-    assert su.average_setlist(shows)[0].search_artist == "The Beatles"
+    assert su.average_setlist(shows)[0].cover_of == "The Beatles"
 
 
 def test_media_agrupa_ignorando_caixa():
@@ -222,7 +223,7 @@ def test_media_sem_repertorio_comum():
 
 def test_media_preserva_artista_de_cover():
     shows = [
-        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "The Beatles")]),
-        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "The Beatles")]),
+        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "GC", cover_of="The Beatles")]),
+        su.Show(artist="GC", songs=[su.Song("Helter Skelter", "GC", cover_of="The Beatles")]),
     ]
-    assert su.average_setlist(shows)[0].search_artist == "The Beatles"
+    assert su.average_setlist(shows)[0].cover_of == "The Beatles"
